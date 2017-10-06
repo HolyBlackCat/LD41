@@ -7,6 +7,15 @@
 
 int main(int, char **)
 {
-    Program::Error("duh");
+    Window win("Woah", {800,600});
+
+    SDL_Event e;
+    while (1)
+    while (SDL_PollEvent(&e))
+    {
+        if (e.type == SDL_QUIT)
+            return 0;
+    }
+
     return 0;
 }

@@ -6,44 +6,58 @@
 
 template <typename interface_Handle,
           typename interface_Param,
-          interface_Handle (*interface_Create     )(const interface_Param &) noexcept,
-          void             (*interface_Free       )(interface_Handle       ) noexcept,
-          void             (*interface_CreateError)(const interface_Param &) noexcept,
+          interface_Handle (*interface_Create     )(const interface_Param &), // May throw
+          void             (*interface_Destroy    )(interface_Handle       ),
+          void             (*interface_CreateError)(const interface_Param &), // May throw
           // Optional:
-          interface_Handle (*interface_Null       )() noexcept = nullptr /*Defaults to 'return interface_Handle(0);'*/>
+          interface_Handle (*interface_Null       )() = nullptr /*Defaults to 'return interface_Handle(0);'*/>
 class MovableHandle
 {
-    static_assert(interface_Create && interface_Free && interface_CreateError, "A nullptr as function parameter.");
+    static_assert(interface_Create && interface_Destroy && interface_CreateError, "A nullptr as function parameter.");
   public:
     using handle_t = interface_Handle;
     using param_t  = interface_Param;
   private:
     handle_t handle;
-
-    void free_without_resetting_handle() noexcept
-    {
-        if (!is_null())
-            interface_Free(handle);
-    }
   public:
     [[nodiscard]] bool is_null() const noexcept
     {
         return handle == null();
     }
 
-    void create(param_t param) noexcept
+    [[nodiscard]] explicit operator bool() const noexcept
     {
-        free_without_resetting_handle();
+        return !is_null();
+    }
+
+    [[nodiscard]] const handle_t &value() const noexcept
+    {
+        return handle;
+    }
+
+    [[nodiscard]] const handle_t &operator *() const noexcept
+    {
+        return handle;
+    }
+
+    [[nodiscard]] MovableHandle &&move() noexcept
+    {
+        return (MovableHandle &&)*this;
+    }
+
+    void create(param_t param)
+    {
+        destroy();
         handle = interface_Create(param);
         if (is_null())
             interface_CreateError(param);
     }
 
-    void free() noexcept
+    void destroy() noexcept
     {
         if (!is_null())
         {
-            interface_Free(handle);
+            interface_Destroy(handle);
             handle = null();
         }
     }
@@ -51,7 +65,7 @@ class MovableHandle
     [[nodiscard]] static handle_t null() noexcept
     {
         // This `if` is contrived way to say `if constexpr (interface_Null)` that dodges `interface_Null can't be null` warning.
-        if constexpr (std::is_same_v<std::integral_constant<decltype(interface_Null), interface_Null>, std::integral_constant<decltype(interface_Null), nullptr>>)
+        if constexpr (!std::is_same_v<std::integral_constant<decltype(interface_Null), interface_Null>, std::integral_constant<decltype(interface_Null), nullptr>>)
             return interface_Null();
         else
             return handle_t(0);
@@ -59,7 +73,7 @@ class MovableHandle
 
     MovableHandle() noexcept : handle(null()) {}
 
-    MovableHandle(const param_t &param) noexcept
+    MovableHandle(const param_t &param)
     {
         handle = interface_Create(param);
         if (is_null())
@@ -68,24 +82,24 @@ class MovableHandle
 
     MovableHandle(const MovableHandle &) = delete;
 
-    MovableHandle(MovableHandle &&o) noexcept : handle(o.handle)
+    MovableHandle(MovableHandle &&o) noexcept(noexcept(handle_t(o.handle), o.handle = null())): handle(o.handle)
     {
         o.handle = null();
     }
 
     MovableHandle &operator=(const MovableHandle &) = delete;
 
-    MovableHandle &operator=(MovableHandle &&o) noexcept
+    MovableHandle &operator=(MovableHandle &&o) noexcept(noexcept(handle = o.handle, o.handle = null()))
     {
         if (&o == this)
             return *this;
-        free_without_resetting_handle();
+        destroy();
         handle = o.handle;
         o.handle = null();
         return *this;
     }
 
-    MovableHandle &operator=(const param_t &param) noexcept
+    MovableHandle &operator=(const param_t &param)
     {
         create(param);
         return *this;
@@ -93,13 +107,8 @@ class MovableHandle
 
     ~MovableHandle() noexcept
     {
-        free_without_resetting_handle();
+        destroy();
     }
-
-    static_assert(noexcept(handle_t(null())) &&
-                  noexcept(std::declval<handle_t &>() = null()) &&
-                  noexcept(std::declval<handle_t &>() = std::declval<const handle_t &>()), "The handle doesn't satisfy nothrow requirements.");
-
 };
 
 

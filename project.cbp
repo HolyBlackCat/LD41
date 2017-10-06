@@ -59,6 +59,7 @@
 			<Add library="uuid" />
 			<Add directory="libs" />
 		</Linker>
+		<Unit filename="libs/glfl.cpp" />
 		<Unit filename="src/main.cpp" />
 		<Unit filename="src/mat.h" />
 		<Unit filename="src/movable_handle.h" />
