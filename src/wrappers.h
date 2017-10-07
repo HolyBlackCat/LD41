@@ -1,0 +1,214 @@
+#ifndef WRAPPERS_H_INCLUDED
+#define WRAPPERS_H_INCLUDED
+
+#include <new>
+#include <memory>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+
+namespace Wrappers
+{
+    namespace impl
+    {
+        template <typename T> struct func_types {};
+        template <typename R, typename ...P> struct func_types<R(P...)>
+        {
+            using return_type = R;
+            using param_types = std::tuple<P...>;
+        };
+        template <typename R, typename ...P> struct func_types<R(P...) noexcept>
+        {
+            using return_type = R;
+            using param_types = std::tuple<P...>;
+        };
+        template <typename T> using return_type = typename func_types<T>::return_type;
+        template <typename T> using param_types = typename func_types<T>::param_types;
+    }
+
+    /* T should contain:
+     * static Handle Create(Params...)
+     * static void Destroy(Handle) // The parameter should be compatible with return type of `Create()`.
+     * static void Error(Params...) // Parameters should be compatible with those of `Create()`.
+     */
+
+    template <typename T, impl::return_type<decltype(T::Create)> (*CustomNull)() = nullptr> class Handle
+    {
+      public:
+        using handle_t = impl::return_type<decltype(T::Create)>;
+        using params_t = impl::param_types<decltype(T::Create)>;
+      private:
+        handle_t handle;
+      public:
+        [[nodiscard]] bool is_null() const noexcept
+        {
+            return handle == null();
+        }
+
+        [[nodiscard]] explicit operator bool() const noexcept
+        {
+            return !is_null();
+        }
+
+        [[nodiscard]] const handle_t &value() const noexcept
+        {
+            return handle;
+        }
+
+        [[nodiscard]] const handle_t &operator *() const noexcept
+        {
+            return handle;
+        }
+
+        [[nodiscard]] Handle &&move() noexcept
+        {
+            return (Handle &&)*this;
+        }
+
+        void create(const params_t &params)
+        {
+            destroy();
+            handle = std::apply(T::Create, params);
+            if (is_null())
+                std::apply(T::Error, params);
+        }
+
+        void destroy() noexcept
+        {
+            if (!is_null())
+            {
+                T::Destroy(handle);
+                handle = null();
+            }
+        }
+
+        [[nodiscard]] static handle_t null() noexcept
+        {
+            // This `if` is contrived way to say `if constexpr (CustomNull)` that dodges `CustomNull can't be null` warning.
+            if constexpr (!std::is_same_v<std::integral_constant<decltype(CustomNull), CustomNull>, std::integral_constant<decltype(CustomNull), nullptr>>)
+                return CustomNull();
+            else
+                return handle_t(0);
+        }
+
+        Handle() noexcept : handle(null()) {}
+
+        Handle(const params_t &params)
+        {
+            handle = std::apply(T::Create, params);
+            if (is_null())
+                std::apply(T::Error, params);
+        }
+
+        Handle(const Handle &) = delete;
+
+        Handle(Handle &&o) noexcept(noexcept(handle_t(o.handle), o.handle = null())): handle(o.handle)
+        {
+            o.handle = null();
+        }
+
+        Handle &operator=(const Handle &) = delete;
+
+        Handle &operator=(Handle &&o) noexcept(noexcept(handle = o.handle, o.handle = null()))
+        {
+            if (&o == this)
+                return *this;
+            destroy();
+            handle = o.handle;
+            o.handle = null();
+            return *this;
+        }
+
+        Handle &operator=(const params_t &params)
+        {
+            create(params);
+            return *this;
+        }
+
+        ~Handle() noexcept
+        {
+            destroy();
+        }
+    };
+
+    template <typename T> class Ptr
+    {
+        T *ptr;
+        template <typename TT, typename ...P> void alloc_without_free(P &&... p)
+        {
+            ptr = new TT((P &&)p...);
+            if (!ptr) // Just to be sure.
+                throw std::bad_alloc{};
+        }
+      public:
+        template <typename TT, typename ...P> void alloc_t(P &&... p)
+        {
+            free();
+            alloc_without_free<TT>((P &&)p...);
+        }
+        template <typename ...P> void alloc(P &&... p)
+        {
+            alloc_t<T>((P &&)p...);
+        }
+        void free()
+        {
+            if (ptr)
+            {
+                std::default_delete<T>{}(ptr);
+                ptr = 0;
+            }
+        }
+
+        [[nodiscard]] bool is_null() const noexcept
+        {
+            return !ptr;
+        }
+        [[nodiscard]] operator T *() const noexcept
+        {
+            return ptr;
+        }
+        [[nodiscard]] T *operator*() const noexcept
+        {
+            return ptr;
+        }
+        [[nodiscard]] T *operator->() const noexcept
+        {
+            return ptr;
+        }
+
+        Ptr() noexcept : ptr(0) {}
+
+        template <typename ...P> Ptr(P &&... p) : ptr(0)
+        {
+            alloc_without_free<T>((P &&)p...);
+        }
+
+        Ptr(const Ptr &) = delete;
+
+        Ptr(Ptr &&o) noexcept : ptr(o.ptr)
+        {
+            o.ptr = 0;
+        }
+
+        Ptr &operator=(const Ptr &) = delete;
+
+        Ptr &operator=(Ptr &&o)
+        {
+            if (&o == this)
+                return *this;
+
+            std::default_delete<T>{}(ptr);
+            ptr = o.ptr;
+            o.ptr = 0;
+            return *this;
+        }
+
+        ~Ptr()
+        {
+            free();
+        }
+    };
+}
+
+
+#endif
