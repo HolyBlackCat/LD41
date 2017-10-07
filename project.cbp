@@ -62,12 +62,14 @@
 		<Unit filename="libs/glfl.cpp" />
 		<Unit filename="src/main.cpp" />
 		<Unit filename="src/mat.h" />
-		<Unit filename="src/movable_handle.h" />
+		<Unit filename="src/preprocessor.h" />
 		<Unit filename="src/program.cpp" />
 		<Unit filename="src/program.h" />
+		<Unit filename="src/reflection.h" />
 		<Unit filename="src/ui.cpp" />
 		<Unit filename="src/ui.h" />
 		<Unit filename="src/window.h" />
+		<Unit filename="src/wrappers.h" />
 		<Extensions>
 			<code_completion />
 			<envvars />
