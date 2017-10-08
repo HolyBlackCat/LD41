@@ -24,15 +24,21 @@ namespace Wrappers
         };
         template <typename T> using return_type = typename func_types<T>::return_type;
         template <typename T> using param_types = typename func_types<T>::param_types;
+
+        template <typename T, typename = void> struct has_custom_null : std::false_type {};
+        template <typename T> struct has_custom_null<T, std::void_t<decltype(T::Null())>> : std::true_type {};
     }
 
     /* T should contain:
      * static Handle Create(Params...)
      * static void Destroy(Handle) // The parameter should be compatible with return type of `Create()`.
      * static void Error(Params...) // Parameters should be compatible with those of `Create()`.
+     * Optional:
+     * static Handle Null()
+     * static void Move(const Handle *old, const Handle *new) // This will be executed after a normal move.
      */
 
-    template <typename T, impl::return_type<decltype(T::Create)> (*CustomNull)() = nullptr> class Handle
+    template <typename T> class Handle
     {
       public:
         using handle_t = impl::return_type<decltype(T::Create)>;
@@ -85,8 +91,8 @@ namespace Wrappers
         [[nodiscard]] static handle_t null() noexcept
         {
             // This `if` is contrived way to say `if constexpr (CustomNull)` that dodges `CustomNull can't be null` warning.
-            if constexpr (!std::is_same_v<std::integral_constant<decltype(CustomNull), CustomNull>, std::integral_constant<decltype(CustomNull), nullptr>>)
-                return CustomNull();
+            if constexpr (impl::has_custom_null<T>::value)
+                return T::Null();
             else
                 return handle_t(0);
         }

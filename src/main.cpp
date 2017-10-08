@@ -13,10 +13,14 @@ int main(int, char **)
 
     SDL_Event e;
     while (1)
-    while (SDL_PollEvent(&e))
     {
-        if (e.type == SDL_QUIT)
-            return 0;
+        while (SDL_PollEvent(&e))
+        {
+            if (e.type == SDL_QUIT)
+                return 0;
+        }
+
+        win.Swap();
     }
 
     return 0;

@@ -37,5 +37,4 @@ namespace Program
     {
         error_messagebox_prefix = prefix;
     }
-
 }
