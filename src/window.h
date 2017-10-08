@@ -7,6 +7,7 @@
 #include <SDL2/SDL.h>
 #include <GLFL/glfl.h>
 
+#include "exceptions.h"
 #include "mat.h"
 #include "program.h"
 #include "reflection.h"
@@ -14,43 +15,11 @@
 
 class Window
 {
-    struct WindowHandleFuncs
-    {
-        static SDL_Window *Create(std::string name, ivec2 pos, ivec2 size, uint32_t flags)
-        {
-            return SDL_CreateWindow(name.c_str(), pos.x, pos.y, size.x, size.y, flags);
-        }
-        static void Destroy(SDL_Window *window)
-        {
-            SDL_DestroyWindow(window);
-        }
-        static void Error(...)
-        {
-            Program::Error("Can't create a window.");
-        }
-    };
-
-    using WindowHandle = Wrappers::Handle<WindowHandleFuncs>;
-
-    struct ContextHandleFuncs
-    {
-        static SDL_GLContext Create(SDL_Window *window)
-        {
-            return SDL_GL_CreateContext(window);
-        }
-        static void Destroy(SDL_GLContext context)
-        {
-            SDL_GL_DeleteContext(context);
-        }
-        static void Error(...)
-        {
-            Program::Error("Can't create a GL context.");
-        }
-    };
-
-    using ContextHandle = Wrappers::Handle<ContextHandleFuncs>;
-
   public:
+    DefineExceptionBase(exception)
+    DefineExceptionStatic(cant_create_window , :exception, "Can't create a window."         , (std::string,name,"Name")(std::string,settings,"Settings"))
+    DefineExceptionStatic(cant_create_context, :exception, "Can't create an OpenGL context.", (std::string,name,"Name")(std::string,settings,"Settings"))
+
     ReflectMemberEnum(SwapModes, (no_vsync)(vsync)(late_swap_tearing)(any_mode))
     ReflectMemberEnum(Profiles, (core)(compatibility)(es)(any_profile))
     ReflectMemberEnum(YesOrNo, (yes)(no)(dont_care))
@@ -162,6 +131,109 @@ class Window
     };
 
   private:
+    struct WindowHandleFuncs
+    {
+        static SDL_Window *Create(std::string name, ivec2 size, Settings &settings)
+        {
+            uint32_t flags = SDL_WINDOW_OPENGL;
+            uint32_t context_flags = 0;
+
+            if (settings.resizable)
+                flags |= SDL_WINDOW_RESIZABLE;
+            if (settings.fullscreen)
+            {
+                if (settings.keep_desktop_resolution_when_fullscreen)
+                    flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+                else
+                    flags |= SDL_WINDOW_FULLSCREEN;
+            }
+            ivec2 pos;
+            if (settings.make_centered)
+                pos = ivec2(SDL_WINDOWPOS_CENTERED_DISPLAY(settings.display));
+            else
+                pos = ivec2(SDL_WINDOWPOS_UNDEFINED_DISPLAY(settings.display));
+            if (settings.gl_major || settings.gl_minor)
+            {
+                SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, settings.gl_major);
+                SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, settings.gl_minor);
+            }
+            switch (settings.gl_profile)
+            {
+              case core:
+                SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+                break;
+              case compatibility:
+                SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+                break;
+              case es:
+                SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+                break;
+              default:
+                break;
+            }
+            if (settings.gl_debug)
+                context_flags |= SDL_GL_CONTEXT_DEBUG_FLAG;
+            switch (settings.hardware_acceleration)
+            {
+              case yes:
+                SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
+                break;
+              case no:
+                SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 0);
+                break;
+              default:
+                break;
+            }
+            if (settings.forward_compatibility)
+                context_flags |= SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG;
+            if (settings.msaa == 1) settings.msaa = 0;
+            if (settings.msaa)
+            {
+                SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+                SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, settings.msaa);
+            }
+            if (settings.color_bits.r) SDL_GL_SetAttribute(SDL_GL_RED_SIZE    , settings.color_bits.r);
+            if (settings.color_bits.g) SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE  , settings.color_bits.g);
+            if (settings.color_bits.b) SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE   , settings.color_bits.b);
+            if (settings.color_bits.a) SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE  , settings.color_bits.a);
+            if (settings.depth_bits  ) SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE  , settings.depth_bits  );
+            if (settings.stencil_bits) SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, settings.stencil_bits);
+
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, context_flags);
+
+            return SDL_CreateWindow(name.c_str(), pos.x, pos.y, size.x, size.y, flags);
+        }
+        static void Destroy(SDL_Window *window)
+        {
+            SDL_DestroyWindow(window);
+        }
+        static void Error(std::string name, ivec2 /*size*/, const Settings &settings)
+        {
+            throw cant_create_window(name, Reflection::to_string_tree(settings));
+        }
+    };
+
+    using WindowHandle = Wrappers::Handle<WindowHandleFuncs>;
+
+    struct ContextHandleFuncs
+    {
+        static SDL_GLContext Create(SDL_Window *window, std::string /*name*/, const Settings &/*settings*/)
+        {
+            return SDL_GL_CreateContext(window);
+        }
+        static void Destroy(SDL_GLContext context)
+        {
+            SDL_GL_DeleteContext(context);
+        }
+        static void Error(SDL_Window */*window*/, std::string name, const Settings &settings)
+        {
+            throw cant_create_context(name, Reflection::to_string_tree(settings));
+        }
+    };
+
+    using ContextHandle = Wrappers::Handle<ContextHandleFuncs>;
+
+
     WindowHandle window;
     ContextHandle context;
     Wrappers::Ptr<glfl::context> func_context;
@@ -183,75 +255,8 @@ class Window
         size = new_size;
         settings = new_settings;
 
-        uint32_t flags = SDL_WINDOW_OPENGL;
-        uint32_t context_flags = 0;
-
-        if (settings.resizable)
-            flags |= SDL_WINDOW_RESIZABLE;
-        if (settings.fullscreen)
-        {
-            if (settings.keep_desktop_resolution_when_fullscreen)
-                flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-            else
-                flags |= SDL_WINDOW_FULLSCREEN;
-        }
-        ivec2 pos;
-        if (settings.make_centered)
-            pos = ivec2(SDL_WINDOWPOS_CENTERED_DISPLAY(settings.display));
-        else
-            pos = ivec2(SDL_WINDOWPOS_UNDEFINED_DISPLAY(settings.display));
-        if (settings.gl_major || settings.gl_minor)
-        {
-            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, settings.gl_major);
-            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, settings.gl_minor);
-        }
-        switch (settings.gl_profile)
-        {
-          case core:
-            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-            break;
-          case compatibility:
-            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-            break;
-          case es:
-            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-            break;
-          default:
-            break;
-        }
-        if (settings.gl_debug)
-            context_flags |= SDL_GL_CONTEXT_DEBUG_FLAG;
-        switch (settings.hardware_acceleration)
-        {
-          case yes:
-            SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
-            break;
-          case no:
-            SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 0);
-            break;
-          default:
-            break;
-        }
-        if (settings.forward_compatibility)
-            context_flags |= SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG;
-        if (settings.msaa == 1) settings.msaa = 0;
-        if (settings.msaa)
-        {
-            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, settings.msaa);
-        }
-        if (settings.color_bits.r) SDL_GL_SetAttribute(SDL_GL_RED_SIZE    , settings.color_bits.r);
-        if (settings.color_bits.g) SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE  , settings.color_bits.g);
-        if (settings.color_bits.b) SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE   , settings.color_bits.b);
-        if (settings.color_bits.a) SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE  , settings.color_bits.a);
-        if (settings.depth_bits  ) SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE  , settings.depth_bits  );
-        if (settings.stencil_bits) SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, settings.stencil_bits);
-
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, context_flags);
-
-
-        WindowHandle new_window = {{name, pos, size, flags}};
-        ContextHandle new_context = {{*new_window}};
+        WindowHandle new_window = {{name, size, settings}};
+        ContextHandle new_context = {{*new_window, name, settings}};
         window  = new_window.move();
         context = new_context.move();
 
@@ -290,8 +295,12 @@ class Window
         }
 
         func_context.alloc();
-        glfl::active_context(func_context);
-
+        glfl::set_active_context(func_context);
+        glfl::set_function_loader(SDL_GL_GetProcAddress);
+        if (settings.gl_profile != es)
+            glfl::load_gl(settings.gl_major, settings.gl_minor);
+        else
+            glfl::load_gles(settings.gl_major, settings.gl_minor);
     }
 
     void Destroy()

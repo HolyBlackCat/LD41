@@ -1,12 +1,11 @@
 #include <iostream>
+#include "exceptions.h"
 #include "mat.h"
 #include "program.h"
 #include "ui.h"
 #include "window.h"
 #include "wrappers.h"
 #include "reflection.h"
-
-ReflectStruct(S, ((int)(a,b,c),))
 
 int main(int, char **)
 {

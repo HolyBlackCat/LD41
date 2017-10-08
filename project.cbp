@@ -12,6 +12,7 @@
 				<Option object_output="obj/" />
 				<Option type="1" />
 				<Option compiler="gcc" />
+				<Option use_console_runner="0" />
 				<Compiler>
 					<Add option="-D_GLIBCXX_DEBUG" />
 					<Add option="-g" />
@@ -21,7 +22,7 @@
 				<Option output="bin/__0" prefix_auto="1" extension_auto="1" />
 				<Option working_dir="bin/" />
 				<Option object_output="obj/" />
-				<Option type="1" />
+				<Option type="0" />
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-O3" />
@@ -60,12 +61,14 @@
 			<Add directory="libs" />
 		</Linker>
 		<Unit filename="libs/glfl.cpp" />
+		<Unit filename="src/exceptions.h" />
 		<Unit filename="src/main.cpp" />
 		<Unit filename="src/mat.h" />
 		<Unit filename="src/preprocessor.h" />
 		<Unit filename="src/program.cpp" />
 		<Unit filename="src/program.h" />
 		<Unit filename="src/reflection.h" />
+		<Unit filename="src/strings.h" />
 		<Unit filename="src/ui.cpp" />
 		<Unit filename="src/ui.h" />
 		<Unit filename="src/window.h" />
