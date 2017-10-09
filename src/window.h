@@ -9,7 +9,6 @@
 
 #include "exceptions.h"
 #include "mat.h"
-#include "program.h"
 #include "reflection.h"
 #include "wrappers.h"
 
@@ -139,9 +138,9 @@ class Window
   private:
     struct WindowHandleFuncs
     {
-        static SDL_Window *Create(Window *this_object, std::string name, ivec2 size, Settings &settings);
+        static SDL_Window *Create(std::string name, ivec2 size, Settings &settings);
         static void Destroy(SDL_Window *window);
-        static void Error(Window *this_object, std::string name, ivec2 size, const Settings &settings);
+        static void Error(std::string name, ivec2 size, const Settings &settings);
     };
 
     using WindowHandle = Wrappers::Handle<WindowHandleFuncs>;

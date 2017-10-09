@@ -1,8 +1,10 @@
 #include "window.h"
 
+#include "program.h"
+
 #include <utility>
 
-SDL_Window *Window::WindowHandleFuncs::Create(Window *this_object, std::string name, ivec2 size, Settings &settings)
+SDL_Window *Window::WindowHandleFuncs::Create(std::string name, ivec2 size, Settings &settings)
 {
     uint32_t flags = SDL_WINDOW_OPENGL;
     uint32_t context_flags = 0;
@@ -76,7 +78,7 @@ void Window::WindowHandleFuncs::Destroy(SDL_Window *window)
 {
     SDL_DestroyWindow(window);
 }
-void Window::WindowHandleFuncs::Error(Window */*this_object*/, std::string name, ivec2 /*size*/, const Settings &settings)
+void Window::WindowHandleFuncs::Error(std::string name, ivec2 /*size*/, const Settings &settings)
 {
     throw cant_create_window(name, Reflection::to_string_tree(settings));
 }
@@ -114,7 +116,7 @@ void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
     size = new_size;
     settings = new_settings;
 
-    WindowHandle new_window = {{this, name, size, settings}};
+    WindowHandle new_window = {{name, size, settings}};
     ContextHandle new_context = {{*new_window, name, settings}};
     window  = new_window.move();
     context = new_context.move();
