@@ -7,24 +7,12 @@
 #include <type_traits>
 #include <utility>
 
+#include "template_utils.h"
+
 namespace Wrappers
 {
     namespace impl
     {
-        template <typename T> struct func_types {};
-        template <typename R, typename ...P> struct func_types<R(P...)>
-        {
-            using return_type = R;
-            using param_types = std::tuple<P...>;
-        };
-        template <typename R, typename ...P> struct func_types<R(P...) noexcept>
-        {
-            using return_type = R;
-            using param_types = std::tuple<P...>;
-        };
-        template <typename T> using return_type = typename func_types<T>::return_type;
-        template <typename T> using param_types = typename func_types<T>::param_types;
-
         template <typename T, typename = void> struct has_custom_null : std::false_type {};
         template <typename T> struct has_custom_null<T, std::void_t<decltype(T::Null())>> : std::true_type {};
     }
@@ -41,8 +29,8 @@ namespace Wrappers
     template <typename T> class Handle
     {
       public:
-        using handle_t = impl::return_type<decltype(T::Create)>;
-        using params_t = impl::param_types<decltype(T::Create)>;
+        using handle_t = TemplateUtils::return_type<decltype(T::Create)>;
+        using params_t = TemplateUtils::param_types<decltype(T::Create)>;
       private:
         handle_t handle;
       public:
@@ -173,9 +161,9 @@ namespace Wrappers
         {
             return ptr;
         }
-        [[nodiscard]] T *operator*() const noexcept
+        [[nodiscard]] T &operator*() const noexcept
         {
-            return ptr;
+            return *ptr;
         }
         [[nodiscard]] T *operator->() const noexcept
         {

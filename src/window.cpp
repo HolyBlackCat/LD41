@@ -4,6 +4,13 @@
 
 #include <utility>
 
+static constexpr char window_data_name_this_ptr[] = "*";
+
+void Window::OnMove(const Window &/*from*/, const Window &to)
+{
+    SDL_SetWindowData(*to.window, window_data_name_this_ptr, (void *)&to);
+}
+
 SDL_Window *Window::WindowHandleFuncs::Create(std::string name, ivec2 size, Settings &settings)
 {
     uint32_t flags = SDL_WINDOW_OPENGL;
@@ -116,8 +123,8 @@ void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
     size = new_size;
     settings = new_settings;
 
-    WindowHandle new_window = {{name, size, settings}};
-    ContextHandle new_context = {{*new_window, name, settings}};
+    Handle_t new_window = {{name, size, settings}};
+    ContextHandle_t new_context = {{*new_window, name, settings}};
     window  = new_window.move();
     context = new_context.move();
 
@@ -162,6 +169,8 @@ void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
         glfl::load_gl(settings.gl_major, settings.gl_minor);
     else
         glfl::load_gles(settings.gl_major, settings.gl_minor);
+
+    SDL_SetWindowData(*window, window_data_name_this_ptr, this);
 }
 void Window::Destroy()
 {
@@ -196,4 +205,21 @@ SDL_GLContext Window::GetContextHandle() const
 void Window::Swap() const
 {
     SDL_GL_SwapWindow(*window);
+}
+
+SDL_Window *Window::Handle() const
+{
+    return *window;
+}
+SDL_GLContext Window::ContextHandle() const
+{
+    return *context;
+}
+const glfl::context &Window::FuncContext() const
+{
+    return *func_context;
+}
+const Window *Window::FromHandle(SDL_Window *handle)
+{
+    return (Window *)SDL_GetWindowData(handle, window_data_name_this_ptr);
 }

@@ -10,10 +10,14 @@
 #include "exceptions.h"
 #include "mat.h"
 #include "reflection.h"
+#include "template_utils.h"
 #include "wrappers.h"
 
 class Window
+  : TemplateUtils::MoveFunc<Window>
 {
+    // Window data named "*" (`SDL_SetWindowData(window, "*", value)`) is reserved to hold a pointer to the associated window object.
+
   public:
     DefineExceptionBase(exception)
     DefineExceptionStatic(cant_create_window, :exception, "Can't create a window.",
@@ -136,6 +140,8 @@ class Window
     };
 
   private:
+    static void OnMove(const Window &from, const Window &to);
+
     struct WindowHandleFuncs
     {
         static SDL_Window *Create(std::string name, ivec2 size, Settings &settings);
@@ -143,7 +149,7 @@ class Window
         static void Error(std::string name, ivec2 size, const Settings &settings);
     };
 
-    using WindowHandle = Wrappers::Handle<WindowHandleFuncs>;
+    using Handle_t = Wrappers::Handle<WindowHandleFuncs>;
 
     struct ContextHandleFuncs
     {
@@ -152,11 +158,11 @@ class Window
         static void Error(SDL_Window *window, std::string name, const Settings &settings);
     };
 
-    using ContextHandle = Wrappers::Handle<ContextHandleFuncs>;
+    using ContextHandle_t = Wrappers::Handle<ContextHandleFuncs>;
 
 
-    WindowHandle window;
-    ContextHandle context;
+    Handle_t window;
+    ContextHandle_t context;
     Wrappers::Ptr<glfl::context> func_context;
 
     std::string name;
@@ -175,6 +181,11 @@ class Window
     SDL_GLContext GetContextHandle() const;
 
     void Swap() const;
+
+    SDL_Window *Handle() const;
+    SDL_GLContext ContextHandle() const;
+    const glfl::context &FuncContext() const;
+    static const Window *FromHandle(SDL_Window *); // Returns a pointer to a Window object associated with passed handle (by using `SDL_GetWindowData(handle, "")`).
 };
 
 #endif
