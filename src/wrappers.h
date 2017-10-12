@@ -186,7 +186,7 @@ namespace Wrappers
 
         Ptr &operator=(const Ptr &) = delete;
 
-        Ptr &operator=(Ptr &&o)
+        Ptr &operator=(Ptr &&o) noexcept
         {
             if (&o == this)
                 return *this;
