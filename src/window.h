@@ -1,6 +1,7 @@
 #ifndef WINDOW_H_INCLUDED
 #define WINDOW_H_INCLUDED
 
+#include <cstdint>
 #include <string>
 #include <utility>
 
@@ -32,17 +33,20 @@ class Window
     ReflectMemberEnum(SwapModes, (no_vsync)(vsync)(late_swap_tearing)(any_mode))
     ReflectMemberEnum(Profiles, (core)(compatibility)(es)(any_profile))
     ReflectMemberEnum(YesOrNo, (yes)(no)(dont_care))
+    ReflectMemberEnum(Position, (centered)(undefined)(custom))
 
     struct Settings
     {
+        ivec2 coords = {};
         ivec2 min_size = {};
         bool resizable = 0;
+        bool share_context = 0;
 
         Reflect(Settings)
         ( (bool)(fullscreen)(=0),
           (bool)(keep_desktop_resolution_when_fullscreen)(=0),
           (int)(display)(=0),
-          (bool)(make_centered)(=0),
+          (Position)(position)(=undefined),
           (int)(gl_major)(=3),
           (int)(gl_minor)(=3),
           (Profiles)(gl_profile)(=compatibility),
@@ -81,9 +85,20 @@ class Window
             display = n;
             return *this;
         }
-        ref MakeCentered(bool c)
+        ref Position(ivec2 p)
         {
-            make_centered = c;
+            position = custom;
+            coords = p;
+            return *this;
+        }
+        ref Position_Centered()
+        {
+            position = centered;
+            return *this;
+        }
+        ref Position_Undefined()
+        {
+            position = undefined;
             return *this;
         }
         ref GlVersion(int maj, int min)
@@ -100,6 +115,11 @@ class Window
         ref GlDebug(bool d)
         {
             gl_debug = d;
+            return *this;
+        }
+        ref ShareContext(bool s)
+        {
+            share_context = s;
             return *this;
         }
         ref SwapMode(SwapModes s)
@@ -140,7 +160,7 @@ class Window
     };
 
   private:
-    static void OnMove(const Window &from, const Window &to);
+    static void OnMove(const Window &from, const Window &to) noexcept;
 
     struct WindowHandleFuncs
     {
@@ -172,6 +192,7 @@ class Window
   public:
     Window() {}
     Window(std::string name, ivec2 size, Settings settings = {});
+    ~Window();
     void Create(std::string new_name, ivec2 new_size, Settings new_settings = {});
     void Destroy();
     bool Exists() const;
@@ -185,7 +206,11 @@ class Window
     SDL_Window *Handle() const;
     SDL_GLContext ContextHandle() const;
     const glfl::context &FuncContext() const;
-    static const Window *FromHandle(SDL_Window *); // Returns a pointer to a Window object associated with passed handle (by using `SDL_GetWindowData(handle, "")`).
+
+    static const Window *FromHandle(SDL_Window *); // Returns a Window associated with a handle       (using `SDL_GetWindowData(handle, "*")`) or 0 if not found.
+    static const Window *FromID(uint32_t);         // Returns a Window associated with an internal ID (using `FromHandle(SDL_GetWindowFromID(id))`) or 0 if not found.
+
+    mutable bool closure_requested = 0;
 };
 
 #endif

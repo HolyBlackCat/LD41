@@ -6,7 +6,9 @@
 
 static constexpr char window_data_name_this_ptr[] = "*";
 
-void Window::OnMove(const Window &/*from*/, const Window &to)
+static SDL_Window *active_window = 0;
+
+void Window::OnMove(const Window &/*from*/, const Window &to) noexcept
 {
     SDL_SetWindowData(*to.window, window_data_name_this_ptr, (void *)&to);
 }
@@ -25,11 +27,18 @@ SDL_Window *Window::WindowHandleFuncs::Create(std::string name, ivec2 size, Sett
         else
             flags |= SDL_WINDOW_FULLSCREEN;
     }
-    ivec2 pos;
-    if (settings.make_centered)
-        pos = ivec2(SDL_WINDOWPOS_CENTERED_DISPLAY(settings.display));
-    else
-        pos = ivec2(SDL_WINDOWPOS_UNDEFINED_DISPLAY(settings.display));
+    switch (settings.position)
+    {
+      case centered:
+        settings.coords = ivec2(SDL_WINDOWPOS_CENTERED_DISPLAY(settings.display));
+        break;
+      case undefined:
+        settings.coords = ivec2(SDL_WINDOWPOS_UNDEFINED_DISPLAY(settings.display));
+        break;
+      case custom:
+        // Nothing.
+        break;
+    }
     if (settings.gl_major || settings.gl_minor)
     {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, settings.gl_major);
@@ -51,6 +60,8 @@ SDL_Window *Window::WindowHandleFuncs::Create(std::string name, ivec2 size, Sett
     }
     if (settings.gl_debug)
         context_flags |= SDL_GL_CONTEXT_DEBUG_FLAG;
+    if (settings.share_context)
+        SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
     switch (settings.hardware_acceleration)
     {
       case yes:
@@ -79,7 +90,7 @@ SDL_Window *Window::WindowHandleFuncs::Create(std::string name, ivec2 size, Sett
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, context_flags);
 
-    return SDL_CreateWindow(name.c_str(), pos.x, pos.y, size.x, size.y, flags);
+    return SDL_CreateWindow(name.c_str(), settings.coords.x, settings.coords.y, size.x, size.y, flags);
 }
 void Window::WindowHandleFuncs::Destroy(SDL_Window *window)
 {
@@ -108,6 +119,11 @@ Window::Window(std::string name, ivec2 size, Settings settings)
     Create(name, size, settings);
 }
 
+Window::~Window()
+{
+    if (active_window == *window)
+        active_window = 0;
+}
 
 void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
 {
@@ -171,6 +187,8 @@ void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
         glfl::load_gles(settings.gl_major, settings.gl_minor);
 
     SDL_SetWindowData(*window, window_data_name_this_ptr, this);
+
+    active_window = *window;
 }
 void Window::Destroy()
 {
@@ -184,6 +202,11 @@ bool Window::Exists() const
 
 void Window::Activate() const
 {
+    if (active_window == *window)
+        return;
+
+    active_window = *window;
+
     SDL_GL_MakeCurrent(*window, *context);
     glfl::set_active_context(func_context);
 }
@@ -204,6 +227,7 @@ SDL_GLContext Window::GetContextHandle() const
 
 void Window::Swap() const
 {
+    Activate();
     SDL_GL_SwapWindow(*window);
 }
 
@@ -219,7 +243,15 @@ const glfl::context &Window::FuncContext() const
 {
     return *func_context;
 }
+
 const Window *Window::FromHandle(SDL_Window *handle)
 {
     return (Window *)SDL_GetWindowData(handle, window_data_name_this_ptr);
+}
+const Window *Window::FromID(uint32_t id)
+{
+    SDL_Window *win = SDL_GetWindowFromID(id);
+    if (!win)
+        return 0;
+    return FromHandle(win);
 }
