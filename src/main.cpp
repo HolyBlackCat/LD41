@@ -1,24 +1,26 @@
 #include <iostream>
+
+#include "events.h"
 #include "exceptions.h"
 #include "mat.h"
+#include "preprocessor.h"
 #include "program.h"
+#include "reflection.h"
+#include "string.h"
+#include "template_utils.h"
 #include "ui.h"
 #include "window.h"
 #include "wrappers.h"
-#include "reflection.h"
 
 int main(int, char **)
 {
     Window win("Woah", {800,600});
 
-    SDL_Event e;
     while (1)
     {
-        while (SDL_PollEvent(&e))
-        {
-            if (e.type == SDL_QUIT)
-                return 0;
-        }
+        Events::Process();
+
+        std::cout << Events::TimePoints::KeyDown(SDL_SCANCODE_SPACE) << '\t' << Events::TimePoints::KeyUp(SDL_SCANCODE_SPACE) << '\t' << Events::TimePoints::KeyRepeat(SDL_SCANCODE_SPACE) << '\n';
 
         win.Swap();
     }

@@ -61,6 +61,8 @@
 			<Add directory="libs" />
 		</Linker>
 		<Unit filename="libs/glfl.cpp" />
+		<Unit filename="src/events.cpp" />
+		<Unit filename="src/events.h" />
 		<Unit filename="src/exceptions.h" />
 		<Unit filename="src/main.cpp" />
 		<Unit filename="src/mat.h" />
@@ -69,6 +71,7 @@
 		<Unit filename="src/program.h" />
 		<Unit filename="src/reflection.h" />
 		<Unit filename="src/strings.h" />
+		<Unit filename="src/template_utils.h" />
 		<Unit filename="src/ui.cpp" />
 		<Unit filename="src/ui.h" />
 		<Unit filename="src/window.cpp" />
