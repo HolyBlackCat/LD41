@@ -210,6 +210,7 @@ class Window
     static const Window *FromHandle(SDL_Window *); // Returns a Window associated with a handle       (using `SDL_GetWindowData(handle, "*")`) or 0 if not found.
     static const Window *FromID(uint32_t);         // Returns a Window associated with an internal ID (using `FromHandle(SDL_GetWindowFromID(id))`) or 0 if not found.
 
+    // Create() resets those variables:
     mutable bool closure_requested = 0;
 };
 

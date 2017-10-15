@@ -3,23 +3,32 @@
 
 #include <cstdint>
 
+#include "mat.h"
+
 namespace Events
 {
-    using TimePoint_t = uint32_t;
-
-    TimePoint_t TimePoint();
-
     // If this flag isn't handled, the program will be closed at the beginning of the next event tick.
     // If only one window is opened, this will be set when user tries to close it (but other exit reasons do exist).
     bool ExitRequested();
     void IgnoreExitRequest(); // Resets the above flag.
 
-    namespace TimePoints
+    using Time_t = uint32_t;
+    Time_t Time();
+
+    namespace Input
     {
-        // `index == 0` has a special meaning and designates any (last) key.
-        TimePoint_t KeyDown(int index);
-        TimePoint_t KeyUp(int index);
-        TimePoint_t KeyRepeat(int index);
+        enum DeviceType {no_device, keyboard, mouse};
+        using DeviceID = uint32_t;
+        enum Action {pressed, released, repeated};
+        using Index = int; // 0 is reserved for 'any key/button'.
+        Time_t KeyTime(DeviceType, DeviceID, Action, Index);
+        Index LastKey(DeviceType, DeviceID, Action);
+
+        using VecIndex = int;
+        enum MouseVectors {vec_mouse_pos, vec_mouse_pos_rel, vec_mouse_wheel, vec_mouse_count/*enum size*/};
+
+        ivec2 Vector(DeviceType, DeviceID, VecIndex);
+        Time_t VectorTime(DeviceType, DeviceID, VecIndex);
     }
 
     void Process();

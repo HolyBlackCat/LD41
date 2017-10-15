@@ -1,5 +1,7 @@
 #include "events.h"
 
+#include <vector>
+
 #include <SDL2/SDL.h>
 
 #include "program.h"
@@ -7,9 +9,9 @@
 
 namespace Events
 {
-    static TimePoint_t tick_counter = 1; // Sic! This starts from 1, because 0 means 'never'.
+    static Time_t tick_counter = 0;
 
-    TimePoint_t TimePoint()
+    Time_t Time()
     {
         return tick_counter;
     }
@@ -26,32 +28,168 @@ namespace Events
         exit_requested = 0;
     }
 
-
-    static constexpr int key_count = SDL_NUM_SCANCODES;
-
-    namespace TimePoints
+    namespace Input
     {
-        static TimePoint_t array_key_down[key_count]{},
-                           array_key_up[key_count]{},
-                           array_key_repeat[key_count]{};
+        class Keys
+        {
+            template <typename T> struct Pack
+            {
+                T value_pressed = 0, value_released = 0, value_repeated = 0;
 
-        TimePoint_t KeyDown(int index)
+                void Set(Action a, const T &value)
+                {
+                    switch (a)
+                    {
+                      case pressed:
+                        value_pressed = value;
+                        break;
+                      case released:
+                        value_released = value;
+                        break;
+                      case repeated:
+                        value_repeated = value;
+                        break;
+                      default:
+                        break;
+                    }
+                }
+                T Get(Action a) const
+                {
+                    switch (a)
+                    {
+                      case pressed:
+                        return value_pressed;
+                      case released:
+                        return value_released;
+                      case repeated:
+                        return value_repeated;
+                      default:
+                        return 0;
+                    }
+                }
+            };
+            std::vector<Pack<Time_t>> times;
+            Pack<Index> last;
+
+          public:
+            Keys() {}
+            Keys(int size) : times(size) {}
+
+            Time_t GetTime(Action action, Index index) const
+            {
+                if (index < 0 || index >= int(times.size()))
+                    return 0;
+                return times[index].Get(action);
+            }
+            Index GetLast(Action action) const
+            {
+                return last.Get(action);
+            }
+
+            void Set(Action action, Index index)
+            {
+                if (index <= 0 || index >= int(times.size())) // Sic! `index == 0` can't be set directly.
+                    return;
+                times[0].Set(action, Time());
+                times[index].Set(action, Time());
+                last.Set(action, index);
+            }
+        };
+
+        class Vectors
         {
-            if (index < 0 || index >= key_count)
-                return 0;
-            return array_key_down[index];
+            struct Pack
+            {
+                ivec2 vec = {};
+                Time_t time = 0;
+            };
+            std::vector<Pack> array;
+
+          public:
+            Vectors() {}
+            Vectors(int size) : array(size) {}
+
+            ivec2 GetVec(VecIndex index) const
+            {
+                if (index < 0 || index >= int(array.size()))
+                    return {};
+                return array[index].vec;
+            }
+            Time_t GetTime(VecIndex index) const
+            {
+                if (index < 0 || index >= int(array.size()))
+                    return 0;
+                return array[index].time;
+            }
+
+            void Set(VecIndex index, ivec2 value)
+            {
+                if (index < 0 || index >= int(array.size()))
+                    return;
+                array[index].vec = value;
+                array[index].time = Time();
+            }
+            void Accumulate(VecIndex index, ivec2 value)
+            {
+                if (index < 0 || index >= int(array.size()))
+                    return;
+                if (array[index].time == Time())
+                {
+                    array[index].vec += value;
+                }
+                else
+                {
+                    array[index].vec = value;
+                    array[index].time = Time();
+                }
+            }
+        };
+
+        static Keys dummy_keys, keyboard_keys(SDL_NUM_SCANCODES), mouse_keys(31);
+        static Vectors dummy_vecs, mouse_vecs(vec_mouse_count);
+
+        static Keys &GetKeys(DeviceType type, DeviceID id)
+        {
+            (void)id;
+
+            switch (type)
+            {
+              case keyboard:
+                return keyboard_keys;
+              case mouse:
+                return mouse_keys;
+              default:
+                return dummy_keys;
+            }
         }
-        TimePoint_t KeyUp(int index)
+        static Vectors &GetVectors(DeviceType type, DeviceID id)
         {
-            if (index < 0 || index >= key_count)
-                return 0;
-            return array_key_up[index];
+            (void)id;
+
+            switch (type)
+            {
+              case mouse:
+                return mouse_vecs;
+              default:
+                return dummy_vecs;
+            }
         }
-        TimePoint_t KeyRepeat(int index)
+
+        Time_t KeyTime(DeviceType device, DeviceID id, Action action, Index index)
         {
-            if (index < 0 || index >= key_count)
-                return 0;
-            return array_key_repeat[index];
+            return GetKeys(device, id).GetTime(action, index);
+        }
+        Index LastKey(DeviceType device, DeviceID id, Action action)
+        {
+            return GetKeys(device, id).GetLast(action);
+        }
+        ivec2 Vector(DeviceType device, DeviceID id, VecIndex v_index)
+        {
+            return GetVectors(device, id).GetVec(v_index);
+        }
+        Time_t VectorTime(DeviceType device, DeviceID id, VecIndex v_index)
+        {
+            return GetVectors(device, id).GetTime(v_index);
         }
     }
 
@@ -59,6 +197,9 @@ namespace Events
     {
         if (exit_requested)
             Program::Exit();
+
+        // Sic! This is incremented before processing the events because we reserve `time == 0` for things that never happened.
+        tick_counter++;
 
         SDL_Event event;
 
@@ -71,22 +212,31 @@ namespace Events
                 break;
 
               case SDL_KEYDOWN:
-                if (event.key.keysym.scancode <= 0 || event.key.keysym.scancode >= key_count) // Note the `<= 0`! Scancode 0 is 'undefined', so we use it for the last used key.
-                    break;
-                TimePoints::array_key_repeat[0] = tick_counter;
-                TimePoints::array_key_repeat[event.key.keysym.scancode] = tick_counter;
+                Input::keyboard_keys.Set(Input::repeated, event.key.keysym.scancode);
                 if (event.key.repeat)
                     break;
-                TimePoints::array_key_down[0] = tick_counter;
-                TimePoints::array_key_down[event.key.keysym.scancode] = tick_counter;
+                Input::keyboard_keys.Set(Input::pressed, event.key.keysym.scancode);
                 break;
               case SDL_KEYUP:
-                if (event.key.keysym.scancode <= 0 || event.key.keysym.scancode >= key_count) // Note the `<= 0`! Scancode 0 is 'undefined', so we use it for the last used key.
-                    break;
                 if (event.key.repeat) // Sic! We don't care about repeated releases.
                     break;
-                TimePoints::array_key_up[0] = tick_counter;
-                TimePoints::array_key_up[event.key.keysym.scancode] = tick_counter;
+                Input::keyboard_keys.Set(Input::released, event.key.keysym.scancode);
+                break;
+
+              case SDL_MOUSEBUTTONDOWN:
+                Input::mouse_keys.Set(Input::pressed, event.button.button);
+                break;
+              case SDL_MOUSEBUTTONUP:
+                Input::mouse_keys.Set(Input::released, event.button.button);
+                break;
+
+              case SDL_MOUSEMOTION:
+                Input::mouse_vecs.Set(Input::vec_mouse_pos, {event.motion.x, event.motion.y});
+                Input::mouse_vecs.Accumulate(Input::vec_mouse_pos_rel, {event.motion.xrel, event.motion.yrel});
+                break;
+
+              case SDL_MOUSEWHEEL:
+                Input::mouse_vecs.Accumulate(Input::vec_mouse_wheel, {event.wheel.x, event.wheel.y});
                 break;
 
               case SDL_WINDOWEVENT:
@@ -100,7 +250,5 @@ namespace Events
                 break;
             }
         }
-
-        tick_counter++;
     }
 }

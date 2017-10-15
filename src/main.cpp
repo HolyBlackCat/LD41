@@ -20,7 +20,7 @@ int main(int, char **)
     {
         Events::Process();
 
-        std::cout << Events::TimePoints::KeyDown(SDL_SCANCODE_SPACE) << '\t' << Events::TimePoints::KeyUp(SDL_SCANCODE_SPACE) << '\t' << Events::TimePoints::KeyRepeat(SDL_SCANCODE_SPACE) << '\n';
+        std::cout << Events::Input::KeyTime(Events::Input::keyboard, 0, Events::Input::pressed, 0) << '\n';
 
         win.Swap();
     }

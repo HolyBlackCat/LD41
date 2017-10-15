@@ -189,6 +189,8 @@ void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
     SDL_SetWindowData(*window, window_data_name_this_ptr, this);
 
     active_window = *window;
+
+    closure_requested = 0;
 }
 void Window::Destroy()
 {
