@@ -2,6 +2,7 @@
 
 #include "events.h"
 #include "exceptions.h"
+#include "input.h"
 #include "mat.h"
 #include "preprocessor.h"
 #include "program.h"
@@ -19,8 +20,6 @@ int main(int, char **)
     while (1)
     {
         Events::Process();
-
-        std::cout << Events::Input::KeyTime(Events::Input::keyboard, 0, Events::Input::pressed, 0) << '\n';
 
         win.Swap();
     }
