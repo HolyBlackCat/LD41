@@ -32,8 +32,8 @@ class Key
     void update() const;
 
   public:
-    Key();
-    Key(DeviceType device_type, DeviceID device_id, Index index);
+    Key() {}
+    Key(DeviceType device_type, DeviceID device_id, Index index) : objects({{device_type, device_id, index}}) {}
 
     [[nodiscard]] Key operator|(const Key &o) const;
 
@@ -55,8 +55,16 @@ class Mouse
     DeviceID device_id;
 
   public:
-    Mouse();
-    Mouse(DeviceType device_type, DeviceID device_id);
+    Mouse(DeviceType device_type, DeviceID device_id)
+      : device_type(device_type), device_id(device_id),
+        left      {device_type, 0, 1},
+        middle    {device_type, 0, 2},
+        right     {device_type, 0, 3},
+        x1        {device_type, 0, 4},
+        x2        {device_type, 0, 5},
+        any_button{device_type, 0, 0}
+    {}
+    Mouse() : Mouse(DeviceType::mouse, 0) {}
 
     Key left, middle, right, x1, x2, any_button;
     [[nodiscard]] Key button(int index) const;
