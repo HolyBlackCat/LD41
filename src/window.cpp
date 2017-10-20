@@ -20,13 +20,6 @@ SDL_Window *Window::WindowHandleFuncs::Create(std::string name, ivec2 size, Sett
 
     if (settings.resizable)
         flags |= SDL_WINDOW_RESIZABLE;
-    if (settings.fullscreen)
-    {
-        if (settings.keep_desktop_resolution_when_fullscreen)
-            flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-        else
-            flags |= SDL_WINDOW_FULLSCREEN;
-    }
     switch (settings.position)
     {
       case centered:
@@ -90,7 +83,17 @@ SDL_Window *Window::WindowHandleFuncs::Create(std::string name, ivec2 size, Sett
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, context_flags);
 
-    return SDL_CreateWindow(name.c_str(), settings.coords.x, settings.coords.y, size.x, size.y, flags);
+    SDL_Window *ret = SDL_CreateWindow(name.c_str(), settings.coords.x, settings.coords.y, size.x, size.y, flags);
+
+    if (!settings.resizable)
+    {
+        SDL_DisplayMode mode{};
+        mode.w = size.x;
+        mode.h = size.y;
+        SDL_GetClosestDisplayMode(settings.display, &mode, &mode);
+        SDL_SetWindowDisplayMode(ret, &mode);
+    }
+    return ret;
 }
 void Window::WindowHandleFuncs::Destroy(SDL_Window *window)
 {
@@ -125,7 +128,7 @@ Window::~Window()
         active_window = 0;
 }
 
-void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
+void Window::Create(std::string name, ivec2 size, Settings settings)
 {
     static bool need_sdl_init = 1;
     if (need_sdl_init)
@@ -134,10 +137,6 @@ void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
             Program::Error("Can't initialize SDL video subsystem.");
         need_sdl_init = 0;
     }
-
-    name = new_name;
-    size = new_size;
-    settings = new_settings;
 
     Handle_t new_window = {{name, size, settings}};
     ContextHandle_t new_context = {{*new_window, name, settings}};
@@ -177,6 +176,8 @@ void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
       default:
         break;
     }
+    if (settings.fullscreen)
+        Fullscreen(1);
 
     func_context.alloc();
     glfl::set_active_context(func_context);
@@ -190,7 +191,10 @@ void Window::Create(std::string new_name, ivec2 new_size, Settings new_settings)
 
     active_window = *window;
 
-    closure_requested = 0;
+    fullscreen = settings.fullscreen;
+    resizable = settings.resizable;
+
+    closure_requested = size_changed = 0;
 }
 void Window::Destroy()
 {
@@ -213,11 +217,6 @@ void Window::Activate() const
     glfl::set_active_context(func_context);
 }
 
-const Window::Settings &Window::GetSettings() const
-{
-    return settings;
-}
-
 const SDL_Window *Window::GetHandle() const
 {
     return *window;
@@ -225,12 +224,6 @@ const SDL_Window *Window::GetHandle() const
 SDL_GLContext Window::GetContextHandle() const
 {
     return *context;
-}
-
-void Window::Swap() const
-{
-    Activate();
-    SDL_GL_SwapWindow(*window);
 }
 
 SDL_Window *Window::Handle() const
@@ -256,4 +249,31 @@ const Window *Window::FromID(uint32_t id)
     if (!win)
         return 0;
     return FromHandle(win);
+}
+
+void Window::Swap() const
+{
+    Activate();
+    SDL_GL_SwapWindow(*window);
+}
+
+void Window::Fullscreen(bool f)
+{
+    fullscreen = f;
+    if (f)
+        SDL_SetWindowFullscreen(*window, resizable ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_FULLSCREEN);
+    else
+        SDL_SetWindowFullscreen(*window, 0);
+}
+
+void Window::ToggleFullscreen()
+{
+    Fullscreen(!fullscreen);
+}
+
+ivec2 Window::Size() const
+{
+    ivec2 ret;
+    SDL_GetWindowSize(*window, &ret.x, &ret.y);
+    return ret;
 }

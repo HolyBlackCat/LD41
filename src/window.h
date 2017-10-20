@@ -44,7 +44,6 @@ class Window
 
         Reflect(Settings)
         ( (bool)(fullscreen)(=0),
-          (bool)(keep_desktop_resolution_when_fullscreen)(=0),
           (int)(display)(=0),
           (Position)(position)(=undefined),
           (int)(gl_major)(=3),
@@ -70,14 +69,9 @@ class Window
             resizable = r;
             return *this;
         }
-        ref FullScreen(bool f)
+        ref Fullscreen(bool f)
         {
             fullscreen = f;
-            return *this;
-        }
-        ref KeepDesktopResolutionWhenFullscreen(bool k)
-        {
-            keep_desktop_resolution_when_fullscreen = k;
             return *this;
         }
         ref Display(int n)
@@ -185,9 +179,8 @@ class Window
     ContextHandle_t context;
     Wrappers::Ptr<glfl::context> func_context;
 
-    std::string name;
-    ivec2 size;
-    Settings settings;
+    bool fullscreen = 0,
+         resizable = 0;
 
   public:
     Window() {}
@@ -197,11 +190,8 @@ class Window
     void Destroy();
     bool Exists() const;
     void Activate() const; // This is necessary when you have multiple windows and you need to switch between them.
-    const Settings &GetSettings() const;
     const SDL_Window *GetHandle() const;
     SDL_GLContext GetContextHandle() const;
-
-    void Swap() const;
 
     SDL_Window *Handle() const;
     SDL_GLContext ContextHandle() const;
@@ -210,8 +200,14 @@ class Window
     static const Window *FromHandle(SDL_Window *); // Returns a Window associated with a handle       (using `SDL_GetWindowData(handle, "*")`) or 0 if not found.
     static const Window *FromID(uint32_t);         // Returns a Window associated with an internal ID (using `FromHandle(SDL_GetWindowFromID(id))`) or 0 if not found.
 
+    void Swap() const;
+    void Fullscreen(bool);
+    void ToggleFullscreen();
+    ivec2 Size() const;
+
     // Create() resets those variables:
-    mutable bool closure_requested = 0;
+    mutable bool closure_requested = 0,
+                 size_changed      = 0;
 };
 
 #endif

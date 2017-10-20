@@ -246,6 +246,10 @@ namespace Events
                     if (auto ptr = Window::FromID(event.window.windowID); ptr)
                         ptr->closure_requested = 1;
                     break;
+                  case SDL_WINDOWEVENT_RESIZED:
+                    if (auto ptr = Window::FromID(event.window.windowID); ptr)
+                        ptr->size_changed = 1;
+                    break;
                 }
                 break;
             }
