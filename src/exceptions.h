@@ -16,7 +16,7 @@
  */
 #define DefineExceptionBase(...) PP0_VA_CALL(DefineExceptionBase_A_, __VA_ARGS__)(__VA_ARGS__)
 #define DefineExceptionBase_A_1(name_       ) DefineExceptionBase_A_2(name_, : ::std::exception)
-#define DefineExceptionBase_A_2(name_, base_) struct name_ base_ {const char *what() const noexcept override = 0;};
+#define DefineExceptionBase_A_2(name_, base_) struct name_ base_ {const char *what() const noexcept override = 0; virtual ~name_() {}};
 
 /* Syntax:
  *
@@ -68,6 +68,8 @@
             { \
                 PP0_SEQ_APPLY(seq_, DefineException_B_ParamAssign, PP0_F_NULL,) \
             } \
+            /* Destructor. */\
+            virtual ~name_##_t() {} \
         } \
         ret { PP0_SEQ_APPLY(seq_, DefineException_B_ParamNames, PP0_F_COMMA,) }; \
         return ret; \
