@@ -2,6 +2,7 @@
 
 #include "events.h"
 #include "exceptions.h"
+#include "graphics.h"
 #include "input.h"
 #include "mat.h"
 #include "preprocessor.h"
@@ -13,6 +14,7 @@
 #include "window.h"
 #include "wrappers.h"
 
+using namespace Graphics;
 using namespace Input;
 
 int main(int, char **)
@@ -25,12 +27,6 @@ int main(int, char **)
 
         if (Keys::f11.pressed())
             win.ToggleFullscreen();
-
-        if (win.size_changed)
-        {
-            win.size_changed = 0;
-            std::cout << win.Size() << '\n';
-        }
 
         glBegin(GL_TRIANGLES);
         glColor3f(0.1, 0.2, 0.3);

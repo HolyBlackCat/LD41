@@ -64,6 +64,7 @@
 		<Unit filename="src/events.cpp" />
 		<Unit filename="src/events.h" />
 		<Unit filename="src/exceptions.h" />
+		<Unit filename="src/graphics.h" />
 		<Unit filename="src/input.cpp" />
 		<Unit filename="src/input.h" />
 		<Unit filename="src/main.cpp" />
