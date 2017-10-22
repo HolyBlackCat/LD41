@@ -1,6 +1,7 @@
 #ifndef TEMPLATE_H_INCLUDED
 #define TEMPLATE_H_INCLUDED
 
+#include <cstddef>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -48,6 +49,12 @@ namespace TemplateUtils
             return *this;
         }
     };
+
+
+    template <typename F, std::size_t ...Seq> static void for_each(std::index_sequence<Seq...>, F &&f)
+    {
+        (f(std::integral_constant<std::size_t, Seq>{}) , ...);
+    }
 }
 
 #endif
