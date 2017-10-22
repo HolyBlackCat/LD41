@@ -521,6 +521,8 @@ namespace Reflection
             template <std::size_t I, typename T> static       auto &field(      T &obj) {return reflection_interface_field(&obj, index_const<I>{});}
             template <std::size_t I, typename T> static const auto &field(const T &obj) {return (const std::remove_reference_t<decltype(field<I>((T &)obj))> &)field<I>((T &)obj);}
 
+            template <typename T, std::size_t I> using field_type = std::remove_reference_t<decltype(field<I>(std::declval<T &>()))>;
+
             template <typename T> static constexpr bool structure_is_tuple() {return reflection_interface_structure_is_tuple((const T *)0);} // If this is set to 1, `field_name` returns field indices.
 
             template <typename T, std::size_t I> static constexpr bool field_has_default_value()
