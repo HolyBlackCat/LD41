@@ -1,7 +1,7 @@
 #ifndef PREPROCESSOR_H_INCLUDED
 #define PREPROCESSOR_H_INCLUDED
 
-// Version 0.0.7 by HolyBlackCat
+// Version 0.0.8 by HolyBlackCat
 
 #include <cstddef>
 #include <type_traits>
@@ -29,6 +29,7 @@
 #define PP0_CALL_B(macro, ...) macro(__VA_ARGS__)
 
 #define PP0_VA_SIZE(...) PP0_VA_SIZE_IMPL_(__VA_ARGS__,32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0)
+#define PP0_VA_SIZE_NOT_1(...) PP0_VA_SIZE_IMPL_(__VA_ARGS__,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0)
 #define PP0_VA_SIZE_IMPL_(i1,i2,i3,i4,i5,i6,i7,i8,i9,i10,i11,i12,i13,i14,i15,i16,i17,i18,i19,i20,i21,i22,i23,i24,i25,i26,i27,i28,i29,i30,i31,i32,size,...) size
 
 #define PP0_STR(...) PP0_STR_IMPL_(__VA_ARGS__)
@@ -39,6 +40,9 @@
 #define PP0_SEQ_CALL(name, seq) PP0_CC(name, PP0_SEQ_SIZE(seq))
 
 #define PP0_SEQ_FIRST(seq) PP0_DEL_PARENS(PP0_VA_FIRST(PP0_PARENS_COMMA seq,))
+
+#define PP0_SEQ_EMPTY(seq) PP0_VA_SIZE_NOT_1(PP0_CC(PP0_SEQ_EMPTY_IMPL_, PP0_SEQ_SIZE(seq)))
+#define PP0_SEQ_EMPTY_IMPL_0 ,
 
 #define PP0_VA_TO_SEQ(...) PP0_VA_CALL(PP0_VA_TO_SEQ_, __VA_ARGS__,)(__VA_ARGS__,)
 #define PP0_VA_TO_SEQ_DISCARD_LAST(...) PP0_VA_CALL(PP0_VA_TO_SEQ_, __VA_ARGS__)(__VA_ARGS__)

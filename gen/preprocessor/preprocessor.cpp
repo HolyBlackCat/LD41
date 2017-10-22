@@ -7,7 +7,7 @@
 #include <sstream>
 
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
-#define VERSION "0.0.7"
+#define VERSION "0.0.8"
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
 
 std::ofstream out_file("preprocessor.h");
@@ -134,6 +134,10 @@ int main()
     for (int i = pp_args; i >= 0; i--)
         l "," << i;
     l ")\n";
+    l "#define PP0_VA_SIZE_NOT_1(...) PP0_VA_SIZE_IMPL_(__VA_ARGS__";
+    for (int i = pp_args; i >= 0; i--)
+        l "," << (i > 1);
+    l ")\n";
     l "#define PP0_VA_SIZE_IMPL_(";
     for (int i = 0; i < pp_args; i++)
         l "i" << i+1 << ",";
@@ -155,6 +159,11 @@ int main()
 
     // Seq first
     l "#define PP0_SEQ_FIRST(seq) PP0_DEL_PARENS(PP0_VA_FIRST(PP0_PARENS_COMMA seq,))\n";
+    l '\n';
+
+    // Seq empty
+    l "#define PP0_SEQ_EMPTY(seq) PP0_VA_SIZE_NOT_1(PP0_CC(PP0_SEQ_EMPTY_IMPL_, PP0_SEQ_SIZE(seq)))\n";
+    l "#define PP0_SEQ_EMPTY_IMPL_0 ,\n";
     l '\n';
 
     // Va to seq
