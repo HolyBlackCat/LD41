@@ -134,7 +134,7 @@ void Window::Create(std::string name, ivec2 size, Settings settings)
     if (need_sdl_init)
     {
         if (SDL_InitSubSystem(SDL_INIT_VIDEO))
-            Program::Error("Can't initialize SDL video subsystem.");
+            throw cant_init_sdl();
         need_sdl_init = 0;
     }
 

@@ -21,6 +21,7 @@ class Window
 
   public:
     DefineExceptionBase(exception)
+    DefineExceptionStatic(cant_init_sdl, :exception, "Can't initialize SDL video subsystem.",)
     DefineExceptionStatic(cant_create_window, :exception, "Can't create a window.",
         ( std::string , name     , "Name"     )
         ( std::string , settings , "Settings" )
@@ -156,8 +157,9 @@ class Window
   private:
     static void OnMove(const Window &from, const Window &to) noexcept;
 
-    struct WindowHandleFuncs
+    class WindowHandleFuncs
     {
+        template <typename> friend class ::Wrappers::Handle;
         static SDL_Window *Create(std::string name, ivec2 size, Settings &settings);
         static void Destroy(SDL_Window *window);
         static void Error(std::string name, ivec2 size, const Settings &settings);
@@ -165,8 +167,9 @@ class Window
 
     using Handle_t = Wrappers::Handle<WindowHandleFuncs>;
 
-    struct ContextHandleFuncs
+    class ContextHandleFuncs
     {
+        template <typename> friend class ::Wrappers::Handle;
         static SDL_GLContext Create(SDL_Window *window, std::string name, const Settings &settings);
         static void Destroy(SDL_GLContext context);
         static void Error(SDL_Window *window, std::string name, const Settings &settings);
