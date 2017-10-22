@@ -63,7 +63,7 @@
                 return _description.c_str(); \
             } \
             /* Constructors. */\
-            name_##_t() {} \
+            PP0_CC(DefineException_B_Ctor_, PP0_SEQ_EMPTY(seq_))(name_) \
             name_##_t( PP0_SEQ_APPLY(seq_, DefineException_B_Param, PP0_F_COMMA,) ) \
             { \
                 PP0_SEQ_APPLY(seq_, DefineException_B_ParamAssign, PP0_F_NULL,) \
@@ -74,6 +74,8 @@
         ret { PP0_SEQ_APPLY(seq_, DefineException_B_ParamNames, PP0_F_COMMA,) }; \
         return ret; \
     }
+#define DefineException_B_Ctor_1(name_)
+#define DefineException_B_Ctor_0(name_) name_##_t() {}
 #define DefineException_B_Param(i_, data_, type_, name_, pretty_name_) \
     ::std::enable_if_t<1, type_> _param_##name_
 #define DefineException_B_ParamNames(i_, data_, type_, name_, pretty_name_) \
@@ -87,13 +89,12 @@
     _description += ": "; \
     if constexpr (std::is_same_v<::std::remove_cv_t<type_>, ::std::string>) \
     { \
-        ::std::string _tmp = ::Strings::Escape(Strings::Normalize((const ::std::string &)name_)); \
+        ::std::string _tmp = ::Strings::Escape(Strings::Trim((const ::std::string &)name_)); \
         if (::std::find(_tmp.begin(), _tmp.end(), '\n') != _tmp.end()) \
             _description += "\n"; \
         _description += _tmp; \
     } \
     else \
-        _description += ::Reflection::to_string(name_); \
-
+        _description += ::Reflection::to_string(name_);
 
 #endif
