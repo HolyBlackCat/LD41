@@ -14,4 +14,10 @@ namespace Program
     void SetErrorMessageBoxPrefix(std::string);
 }
 
+#ifdef NDEBUG
+#  define DebugAssert(text_, /*expr*/...) do {} while (0)
+#else
+#  define DebugAssert(text_, /*expr*/...) do {if (__VA_ARGS__) {} else ::Program::Error("Assertion failed: " text_ ".");} while (0)
+#endif
+
 #endif
