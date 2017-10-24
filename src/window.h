@@ -193,9 +193,6 @@ class Window
     void Destroy();
     bool Exists() const;
     void Activate() const; // This is necessary when you have multiple windows and you need to switch between them.
-    const SDL_Window *GetHandle() const;
-    SDL_GLContext GetContextHandle() const;
-
     SDL_Window *Handle() const;
     SDL_GLContext ContextHandle() const;
     const glfl::context &FuncContext() const;

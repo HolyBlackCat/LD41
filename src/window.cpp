@@ -217,15 +217,6 @@ void Window::Activate() const
     glfl::set_active_context(func_context);
 }
 
-const SDL_Window *Window::GetHandle() const
-{
-    return *window;
-}
-SDL_GLContext Window::GetContextHandle() const
-{
-    return *context;
-}
-
 SDL_Window *Window::Handle() const
 {
     return *window;
