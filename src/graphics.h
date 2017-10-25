@@ -397,7 +397,7 @@ namespace Graphics
             using type = T;
             Uniform() {}
             Uniform(GLuint sh, int loc) : sh(sh), loc(loc) {}
-            const T &operator<<(const T &object) // Binds the shader.
+            void set(const T &object) const // Binds the shader.
             {
                 DebugAssert("Attempt to bind a null shader.", sh);
                 if (sh != binding)
@@ -427,7 +427,6 @@ namespace Graphics
                 else if constexpr (std::is_same_v<T, fmat2x4     >) glUniformMatrix2x4fv(loc, 1, 0, object.as_array());
                 else if constexpr (std::is_same_v<T, fmat3x4     >) glUniformMatrix3x4fv(loc, 1, 0, object.as_array());
                 else static_assert(std::is_void_v<T>, "Uniforms of this type are not supported.");
-                return object;
             }
         };
         template <typename T> class VertexUniform   : public Uniform<T> {public: using Uniform<T>::Uniform; using Uniform<T>::operator=;};

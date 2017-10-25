@@ -24,6 +24,7 @@ ReflectStruct(Attributes, (
 ))
 
 ReflectStruct(Uniforms, (
+    (Shader::VertexUniform<fmat2>)(matrix),
     (Shader::VertexUniform<fvec2>)(screen_size),
 ))
 
@@ -37,7 +38,7 @@ int main(int, char **)
         {"vec3 color"},
         R"(void main()
         {
-            gl_Position = vec4(a_pos / u_screen_size, 0, 1);
+            gl_Position = vec4(u_matrix * a_pos / u_screen_size, 0, 1);
             v_color = a_color;
         })",
         R"(void main()
@@ -46,7 +47,7 @@ int main(int, char **)
         })",
         &uni
     );
-    uni.screen_size << fvec2(4,3);
+    uni.screen_size.set(fvec2(4,3));
 
     Attributes data[]
     {
@@ -68,6 +69,7 @@ int main(int, char **)
 
         Graphics::CheckErrors();
         glClear(GL_COLOR_BUFFER_BIT);
+        uni.matrix.set(fmat2::rotate2D(Events::Time() / 60.));
         buf.Draw(triangles);
 
         win.Swap();
