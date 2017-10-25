@@ -6,7 +6,7 @@
 #include <sstream>
 
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
-#define VERSION "2.5.0"
+#define VERSION "2.5.1"
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
 
 std::ofstream out_file("mat.h");
@@ -426,6 +426,7 @@ inline namespace Vector
             // Type list
             static constexpr struct {const char *tag, *name;} types[]
             {
+                "b",   "bool",
                 "c",   "char",
                 "uc",  "unsigned char",
                 "sc",  "signed char",
