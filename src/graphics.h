@@ -2,6 +2,7 @@
 #define GRAPHICS_H_INCLUDED
 
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <GLFL/glfl.h>
@@ -32,6 +33,42 @@ namespace Graphics
         )
     }
 
+    template <typename T> const char *GlslTypeName()
+    {
+        using namespace TemplateUtils::CexprStr;
+             if constexpr (std::is_same_v<T, bool        >) return "bool";
+        else if constexpr (std::is_same_v<T, float       >) return "float";
+        else if constexpr (std::is_same_v<T, double      >) return "double";
+        else if constexpr (std::is_same_v<T, int         >) return "int";
+        else if constexpr (std::is_same_v<T, unsigned int>) return "uint";
+        else if constexpr (Math::type_category<T>::vec_or_mat)
+        {
+            using Base = typename T::type;
+            using Prefix = std::conditional_t<std::is_same_v<Base, float       >, str_lit<>,
+                           std::conditional_t<std::is_same_v<Base, double      >, str_lit<'d'>,
+                           std::conditional_t<std::is_same_v<Base, bool        >, str_lit<'b'>,
+                           std::conditional_t<std::is_same_v<Base, int         >, str_lit<'i'>,
+                           std::conditional_t<std::is_same_v<Base, unsigned int>, str_lit<'u'>,
+                           void
+                           >>>>>;
+            static_assert(!std::is_void_v<Prefix>, "No name for vectors of this base type.");
+            static_assert(!Math::type_category<T>::mat || std::is_same_v<Base, float> || std::is_same_v<Base, double>, "Matrices aren't allowed to have this base type.");
+            using Body = std::conditional_t<Math::type_category<T>::vec, str_lit<'v','e','c'>, str_lit<'m','a','t'>>;
+            if constexpr (Math::type_category<T>::vec)
+                return str_lit_cat<Prefix, Body, str_lit<T::size + '0'>>::value;
+            else if constexpr (T::width == T::height)
+                return str_lit_cat<Prefix, Body, str_lit<T::width + '0'>>::value;
+            else
+                return str_lit_cat<Prefix, Body, str_lit<T::width + '0', 'x', T::height + '0'>>::value;
+        }
+        else
+        {
+            static_assert(std::is_void_v<T>, "No name for this type.");
+            return "void";
+        }
+    }
+
+
     class Buffer
     {
         template <typename> friend class ::Wrappers::Handle;
@@ -42,7 +79,7 @@ namespace Graphics
         Handle handle;
 
       public:
-        Buffer(decltype(nullptr)) : handle({}) {}
+        Buffer(decltype(nullptr)) : handle(Handle::params_t{}) {}
         Buffer() {}
         void create() {handle.create({});}
         void destroy() {handle.destroy();}
@@ -64,7 +101,7 @@ namespace Graphics
         int size = 0;
       public:
         VertexByteBuffer() {}
-        VertexByteBuffer(int bytes, char *ptr = 0, Usage usage = Usage::static_draw) : buffer(nullptr)
+        VertexByteBuffer(int bytes, const char *ptr = 0, Usage usage = Usage::static_draw) : buffer(nullptr)
         {
             if (bytes)
                 SetData(bytes, ptr, usage);
@@ -81,24 +118,24 @@ namespace Graphics
             if (binding == *buffer)
                 return;
             binding = *buffer;
-            glBindBuffer(GL_VERTEX_ARRAY, binding);
+            glBindBuffer(GL_ARRAY_BUFFER , binding);
         }
         static void Unbind()
         {
             // I don't want to check old binding here.
             binding = 0;
-            glBindBuffer(GL_VERTEX_ARRAY, 0);
+            glBindBuffer(GL_ARRAY_BUFFER , 0);
         }
-        void SetData(int bytes, char *ptr = 0, Usage usage = Usage::static_draw)
+        void SetData(int bytes, const char *ptr = 0, Usage usage = Usage::static_draw)
         {
             Bind();
             size = bytes;
-            glBufferData(GL_VERTEX_ARRAY, bytes, ptr, (GLenum)usage);
+            glBufferData(GL_ARRAY_BUFFER , bytes, ptr, (GLenum)usage);
         }
-        void SetDataPart(int offset, int bytes, char *ptr)
+        void SetDataPart(int offset, int bytes, const char *ptr)
         {
             Bind();
-            glBufferSubData(GL_VERTEX_ARRAY, offset, bytes, ptr);
+            glBufferSubData(GL_ARRAY_BUFFER , offset, bytes, ptr);
         }
     };
 
@@ -157,7 +194,7 @@ namespace Graphics
             Handle object;
           public:
             Program() {}
-            Program(decltype(nullptr)) : object({}) {}
+            Program(decltype(nullptr)) : object(Handle::params_t{}) {}
             void destroy() {object.destroy();}
             GLuint handle() const {return *object;}
             Program &&move() {return (Program&&)*this;}
@@ -165,9 +202,9 @@ namespace Graphics
             {
                 glAttachShader(*object, sh.handle());
             }
-            void set_attribute_location(int loc, const char *name)
+            void set_attribute_location(int loc, const std::string &name)
             {
-                glBindAttribLocation(*object, loc, name);
+                glBindAttribLocation(*object, loc, name.c_str());
             }
             bool link()
             {
@@ -191,18 +228,30 @@ namespace Graphics
 
         Program program;
         SeparateShader vertex, fragment;
-        std::vector<GLint> uniform_locations;
         inline static GLuint binding = 0;
       public:
+        struct Config
+        {
+            std::string version = "330 compatibility";
+            std::string vertex_header, fragment_header;
+            std::string uniform = "uniform";
+            std::string uniform_prefix = "u_";
+            std::string attribute = "attribute";
+            std::string attribute_prefix = "a_";
+            std::string varying_vertex = "varying";
+            std::string varying_fragment = "varying";
+            std::string varying_prefix = "v_";
+        };
         struct Attribute
         {
-            const char *name;
             int location;
+            std::string name;
         };
         Shader() {}
-        void Create(const std::string &v_src, const std::string &f_src, const std::vector<Attribute> &attributes = {})
+        void CreateRaw(const std::string &v_src, const std::string &f_src, const std::vector<Attribute> &attributes = {})
         {
-            Program p({});
+            ""; std::cout << "VERTEX:\n" << v_src << "\nFRAGMENT:\n" << f_src << "\nEND\n";
+            Program p(nullptr);
             SeparateShader v(ShaderType::vertex), f(ShaderType::fragment);
             p.attach(v);
             p.attach(f);
@@ -214,18 +263,98 @@ namespace Graphics
                                                '\n' + v.get_log(),
                                                '\n' + f.get_log());
             for (const auto &it : attributes)
-            {
                 p.set_attribute_location(it.location, it.name);
-            }
             if (!p.link())
                 throw shader_linking_error(p.get_log());
             vertex   = v.move();
             fragment = f.move();
             program  = p.move();
         }
+
+        template <typename T> struct Uniform
+        {
+            using type = T;
+            int location = -1;
+        };
+        template <typename T> struct VertexUniform
+        {
+            using type = T;
+            int location = -1;
+        };
+        template <typename T> struct FragmentUniform
+        {
+            using type = T;
+            int location = -1;
+        };
+
+        template <typename ReflAttributes = void, // Has to be reflected.
+                  typename ReflVaryings   = void, // Has to be reflected too.
+                  typename ReflUniforms   = void> // Has to be reflected and contain only [Vertex|Fragment]Uniform structs.
+        void Create(const std::string &v_src, const std::string &f_src, ReflUniforms *uniforms = 0, const Config &cfg = {})
+        {
+            std::string v, f;
+            v = "#version " + cfg.version + '\n' + cfg.vertex_header + '\n';
+            f = "#version " + cfg.version + '\n' + cfg.fragment_header + '\n';
+            std::vector<Attribute> attribute_vector;
+            if constexpr (!std::is_void_v<ReflUniforms>)
+            {
+                constexpr int field_count = Reflection::Interface::field_count<ReflUniforms>();
+                static_assert(field_count > 0, "Unable to reflect common uniforms. Pass `void` as ReflUniforms if you have none.");
+                TemplateUtils::for_each(std::make_index_sequence<field_count>{}, [&](auto index)
+                {
+                    const char *field_name = Reflection::Interface::field_name<ReflUniforms, index.value>();
+                    using field_type_raw = Reflection::Interface::field_type<ReflUniforms, index.value>;
+                    using field_type = typename field_type_raw::type;
+                    if constexpr (!std::is_same_v<VertexUniform<field_type>, field_type_raw>)
+                        f += cfg.uniform + ' ' + GlslTypeName<field_type>() + ' ' + cfg.uniform_prefix + field_name + ";\n";
+                    if constexpr (!std::is_same_v<FragmentUniform<field_type>, field_type_raw>)
+                        v += cfg.uniform + ' ' + GlslTypeName<field_type>() + ' ' + cfg.uniform_prefix + field_name + ";\n";
+                    if (uniforms)
+                        Reflection::Interface::field<index.value>(*uniforms).location = GetUniformLocation(cfg.uniform_prefix + field_name);
+                });
+            }
+            if constexpr (!std::is_void_v<ReflAttributes>)
+            {
+                constexpr int field_count = Reflection::Interface::field_count<ReflAttributes>();
+                static_assert(field_count > 0, "Unable to reflect attributes. Pass `void` as ReflAttributes if you have none.");
+                attribute_vector.reserve(field_count);
+                TemplateUtils::for_each(std::make_index_sequence<field_count>{}, [&](auto index)
+                {
+                    const char *field_name = Reflection::Interface::field_name<ReflAttributes, index.value>();
+                    using field_type = Math::change_base_type_t<Reflection::Interface::field_type<ReflAttributes, index.value>, float>;
+                    v += cfg.attribute + ' ' + GlslTypeName<field_type>() + ' ' + cfg.attribute_prefix + field_name + ";\n";
+                    attribute_vector.push_back({int(attribute_vector.size()), cfg.attribute_prefix + field_name});
+                });
+            }
+            if constexpr (!std::is_void_v<ReflVaryings>)
+            {
+                constexpr int field_count = Reflection::Interface::field_count<ReflVaryings>();
+                static_assert(field_count > 0, "Unable to reflect varyings. Pass `void` as ReflVaryings if you have none.");
+                TemplateUtils::for_each(std::make_index_sequence<field_count>{}, [&](auto index)
+                {
+                    const char *field_name = Reflection::Interface::field_name<ReflVaryings, index.value>();
+                    using field_type = Reflection::Interface::field_type<ReflVaryings, index.value>;
+                    v += cfg.varying_vertex   + ' ' + GlslTypeName<field_type>() + ' ' + cfg.varying_prefix + field_name + ";\n";
+                    f += cfg.varying_fragment + ' ' + GlslTypeName<field_type>() + ' ' + cfg.varying_prefix + field_name + ";\n";
+                });
+            }
+            CreateRaw(v + v_src, f + f_src, attribute_vector);
+            if constexpr (!std::is_void_v<ReflUniforms>)
+            {
+                if (uniforms)
+                {
+                    constexpr int field_count = Reflection::Interface::field_count<ReflUniforms>();
+                    static_assert(field_count > 0, "Unable to reflect common uniforms. Pass `void` as ReflUniforms if you have none.");
+                    TemplateUtils::for_each(std::make_index_sequence<field_count>{}, [&](auto index)
+                    {
+                        const char *field_name = Reflection::Interface::field_name<ReflUniforms, index.value>();
+                        Reflection::Interface::field<index.value>(*uniforms).location = GetUniformLocation(cfg.uniform_prefix + field_name);
+                    });
+                }
+            }
+        }
         void Destroy()
         {
-            uniform_locations = {};
             program.destroy();
             vertex.destroy();
             fragment.destroy();
@@ -244,17 +373,9 @@ namespace Graphics
             binding = 0;
             glUseProgram(0);
         }
-        GLint UniformLocation(int index) // GetUniformLocations must be called before this can be used.
+        GLint GetUniformLocation(const std::string &name) const
         {
-            return uniform_locations[index];
-        }
-        void GetUniformLocations(const std::vector<const char *> &uniforms)
-        {
-            uniform_locations = {};
-            for (const char *it : uniforms)
-            {
-                uniform_locations.push_back(glGetUniformLocation(program.handle(), it));
-            }
+            return glGetUniformLocation(program.handle(), name.c_str());
         }
         ~Shader()
         {

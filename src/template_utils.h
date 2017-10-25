@@ -55,6 +55,23 @@ namespace TemplateUtils
     {
         (f(std::integral_constant<std::size_t, Seq>{}) , ...);
     }
+
+    inline namespace CexprStr
+    {
+        template <char ...C> struct str_lit
+        {
+            static constexpr char value[] {C..., '\0'};
+        };
+
+        namespace impl
+        {
+            template <typename ...P> struct str_lit_cat {using type = str_lit<>;};
+            template <typename A, typename B, typename ...P> struct str_lit_cat<A, B, P...> {using type = typename str_lit_cat<typename str_lit_cat<A, B>::type, P...>::type;};
+            template <char ...A, char ...B> struct str_lit_cat<str_lit<A...>, str_lit<B...>> {using type = str_lit<A..., B...>;};
+            template <typename T> struct str_lit_cat<T> {using type = T;};
+        }
+        template <typename ...P> using str_lit_cat = typename impl::str_lit_cat<P...>::type;
+    }
 }
 
 #endif
