@@ -1,11 +1,14 @@
 #ifndef GRAPHICS_H_INCLUDED
 #define GRAPHICS_H_INCLUDED
 
+#include <algorithm>
 #include <string>
 #include <type_traits>
 #include <vector>
 
 #include <GLFL/glfl.h>
+#include <stb_image.h>
+#include <stb_image_write.h>
 
 #include "exceptions.h"
 #include "program.h"
@@ -23,6 +26,9 @@ namespace Graphics
         )
         DefineExceptionInline(gl_error, :exception, "OpenGL error.",
             (std::string,message,"Message")
+        )
+        DefineExceptionInline(cant_load_image, :exception, "Can't load an image.",
+            (std::string,name,"Name")
         )
 
         DefineExceptionBase(shader_exception, :exception)
@@ -104,6 +110,75 @@ namespace Graphics
         }
     }
 
+    class Image
+    {
+        std::vector<u8vec4> data;
+        int width = 0;
+      public:
+        enum Format {png, tga};
+
+        Image() {}
+        Image(ivec2 size, const char *ptr = 0)
+        {
+            FromMemory(size, ptr);
+        }
+        Image(std::string fname, bool flip_y = 0)
+        {
+            FromFile(fname, flip_y);
+        }
+        ivec2 Size() const {return {width, int(data.size()) / width};}
+        u8vec4 Get(ivec2 pos) const
+        {
+            pos = clamp(pos, 0, Size());
+            return data[pos.x + pos.y * width];
+        }
+        void Set(ivec2 pos, u8vec4 v)
+        {
+            if ((pos < 0).any() || (pos >= Size()).any())
+                return;
+            data[pos.x + pos.y * width] = v;
+        }
+
+        void FromMemory(ivec2 size, const char *ptr = 0)
+        {
+            width = size.x;
+            data.resize(size.product());
+            if (ptr)
+                std::copy(ptr, ptr + size.product() * sizeof(u8vec4), (char *)data.data());
+        }
+        void FromFile(std::string fname, bool flip_y = 0)
+        {
+            stbi_set_flip_vertically_on_load(flip_y); // This just sets an internal flag, shouldn't be slow.
+            ivec2 size;
+            [[maybe_unused]] int components;
+            char *ptr = (char *)stbi_load(fname.c_str(), &size.x, &size.y, &components, 4);
+            if (!ptr)
+            {
+                width = 0;
+                throw cant_load_image(fname);
+            }
+            *this = Image(size, ptr);
+            stbi_image_free(ptr);
+        }
+        void Destroy()
+        {
+            data = {};
+            width = 0;
+        }
+
+        void SaveToFile(Format format, std::string fname)
+        {
+            switch (format)
+            {
+              case png:
+                stbi_write_png(fname.c_str(), Size().x, Size().y, 4, data.data(), width * sizeof(u8vec4));
+                return;
+              case tga:
+                stbi_write_tga(fname.c_str(), Size().x, Size().y, 4, data.data());
+                return;
+            }
+        }
+    };
 
     class Buffer
     {
@@ -397,7 +472,7 @@ namespace Graphics
             using type = T;
             Uniform() {}
             Uniform(GLuint sh, int loc) : sh(sh), loc(loc) {}
-            void set(const T &object) const // Binds the shader.
+            const T &operator=(const T &object) const // Binds the shader.
             {
                 DebugAssert("Attempt to bind a null shader.", sh);
                 if (sh != binding)
@@ -427,6 +502,7 @@ namespace Graphics
                 else if constexpr (std::is_same_v<T, fmat2x4     >) glUniformMatrix2x4fv(loc, 1, 0, object.as_array());
                 else if constexpr (std::is_same_v<T, fmat3x4     >) glUniformMatrix3x4fv(loc, 1, 0, object.as_array());
                 else static_assert(std::is_void_v<T>, "Uniforms of this type are not supported.");
+                return object;
             }
         };
         template <typename T> class VertexUniform   : public Uniform<T> {public: using Uniform<T>::Uniform; using Uniform<T>::operator=;};

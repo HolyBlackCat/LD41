@@ -34,7 +34,7 @@ int main(int, char **)
 
     Shader sh;
     Uniforms uni;
-    sh.Create<Attributes, Uniforms>(
+    sh.Create<Attributes>(
         {"vec3 color"},
         R"(void main()
         {
@@ -47,7 +47,7 @@ int main(int, char **)
         })",
         &uni
     );
-    uni.screen_size.set(fvec2(4,3));
+    uni.screen_size = fvec2(4,3);
 
     Attributes data[]
     {
@@ -69,7 +69,7 @@ int main(int, char **)
 
         Graphics::CheckErrors();
         glClear(GL_COLOR_BUFFER_BIT);
-        uni.matrix.set(fmat2::rotate2D(Events::Time() / 60.));
+        uni.matrix = fmat2::rotate2D(Events::Time() / 60.);
         buf.Draw(triangles);
 
         win.Swap();
