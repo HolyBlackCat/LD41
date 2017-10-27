@@ -12,7 +12,7 @@
 #include "mat.h"
 #include "reflection.h"
 #include "template_utils.h"
-#include "wrappers.h"
+#include "utils.h"
 
 class Window
   : TemplateUtils::MoveFunc<Window>
@@ -159,28 +159,28 @@ class Window
 
     class WindowHandleFuncs
     {
-        template <typename> friend class ::Wrappers::Handle;
+        template <typename> friend class ::Utils::Handle;
         static SDL_Window *Create(std::string name, ivec2 size, Settings &settings);
         static void Destroy(SDL_Window *window);
         static void Error(std::string name, ivec2 size, const Settings &settings);
     };
 
-    using Handle_t = Wrappers::Handle<WindowHandleFuncs>;
+    using Handle_t = Utils::Handle<WindowHandleFuncs>;
 
     class ContextHandleFuncs
     {
-        template <typename> friend class ::Wrappers::Handle;
+        template <typename> friend class ::Utils::Handle;
         static SDL_GLContext Create(SDL_Window *window, std::string name, const Settings &settings);
         static void Destroy(SDL_GLContext context);
         static void Error(SDL_Window *window, std::string name, const Settings &settings);
     };
 
-    using ContextHandle_t = Wrappers::Handle<ContextHandleFuncs>;
+    using ContextHandle_t = Utils::Handle<ContextHandleFuncs>;
 
 
     Handle_t window;
     ContextHandle_t context;
-    Wrappers::Ptr<glfl::context> func_context;
+    Utils::AutoPtr<glfl::context> func_context;
 
     bool fullscreen = 0,
          resizable = 0;

@@ -1,5 +1,5 @@
-#ifndef WRAPPERS_H_INCLUDED
-#define WRAPPERS_H_INCLUDED
+#ifndef UTILS_H_INCLUDED
+#define UTILS_H_INCLUDED
 
 #include <new>
 #include <memory>
@@ -7,9 +7,10 @@
 #include <type_traits>
 #include <utility>
 
+#include "exceptions.h"
 #include "template_utils.h"
 
-namespace Wrappers
+namespace Utils
 {
     namespace impl
     {
@@ -25,7 +26,6 @@ namespace Wrappers
      * static Handle Null()
      * static void Move(const Handle *old, const Handle *new) // This will be executed after a normal move.
      */
-
     template <typename T> class Handle
     {
       public:
@@ -125,7 +125,7 @@ namespace Wrappers
         }
     };
 
-    template <typename T> class Ptr
+    template <typename T> class AutoPtr
     {
         T *ptr;
         template <typename TT, typename ...P> void alloc_without_free(P &&... p)
@@ -170,23 +170,23 @@ namespace Wrappers
             return ptr;
         }
 
-        Ptr() noexcept : ptr(0) {}
+        AutoPtr() noexcept : ptr(0) {}
 
-        template <typename ...P> Ptr(P &&... p) : ptr(0)
+        template <typename ...P> AutoPtr(P &&... p) : ptr(0)
         {
             alloc_without_free<T>((P &&)p...);
         }
 
-        Ptr(const Ptr &) = delete;
+        AutoPtr(const AutoPtr &) = delete;
 
-        Ptr(Ptr &&o) noexcept : ptr(o.ptr)
+        AutoPtr(AutoPtr &&o) noexcept : ptr(o.ptr)
         {
             o.ptr = 0;
         }
 
-        Ptr &operator=(const Ptr &) = delete;
+        AutoPtr &operator=(const AutoPtr &) = delete;
 
-        Ptr &operator=(Ptr &&o) noexcept
+        AutoPtr &operator=(AutoPtr &&o) noexcept
         {
             if (&o == this)
                 return *this;
@@ -197,9 +197,98 @@ namespace Wrappers
             return *this;
         }
 
-        ~Ptr()
+        ~AutoPtr()
         {
             free();
+        }
+    };
+
+
+    template <typename Res = int, typename Index = int> class ResourceAllocator
+    {
+        static_assert(std::is_integral<Res>::value && std::is_integral<Index>::value, "Integral types must be used.");
+
+        Index pos;
+        std::vector<Res> pool;
+        std::vector<Index> locations;
+
+        using ResIterator = typename std::vector<Res>::const_iterator;
+      public:
+        inline static const Res not_allocated = -1;
+
+        ResourceAllocator(Index pool_size = 0)
+        {
+            resize(pool_size);
+        }
+
+        void resize(Index new_size) // Frees all resources.
+        {
+            // Extra <s>useless</s> protection agains exceptions.
+            std::vector<Res> new_pool(new_size);
+            std::vector<Index> new_locations(new_size);
+            pool = std::move(new_pool);
+            locations = std::move(new_locations);
+
+            pos = 0;
+            for (Index i = 0; i < new_size; i++)
+            {
+                pool[i] = Index(i);
+                locations[i] = Index(i);
+            }
+        }
+
+        Res alloc() // Returns `not_allocated` (aka -1) on failure.
+        {
+            if (pos >= Index(pool.size()))
+                return not_allocated;
+            return pool[pos++];
+        }
+        bool free(Res id) // Returns 0 if such id was not allocated before.
+        {
+            if (id < 0 || id >= Res(pool.size()) || locations[id] >= pos)
+                return 0;
+            pos--;
+            Res last_id = pool[pos];
+            std::swap(pool[locations[id]], pool[pos]);
+            std::swap(locations[id], locations[last_id]);
+            return 1;
+        }
+        void free_everything()
+        {
+            pos = 0;
+        }
+        Index max_size() const
+        {
+            return Index(pool.size());
+        }
+        Index current_size() const
+        {
+            return pos;
+        }
+
+        ResIterator begin_all() const
+        {
+            return pool.begin();
+        }
+        ResIterator end_all() const
+        {
+            return pool.end();
+        }
+        ResIterator begin_allocated() const
+        {
+            return begin_all();
+        }
+        ResIterator end_allocated() const
+        {
+            return pool.begin() + pos;
+        }
+        ResIterator begin_free() const
+        {
+            return end_allocated();
+        }
+        ResIterator end_free() const
+        {
+            return end_all();
         }
     };
 }

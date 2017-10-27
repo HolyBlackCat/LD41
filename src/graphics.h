@@ -11,10 +11,11 @@
 #include <stb_image_write.h>
 
 #include "exceptions.h"
+#include "platform.h"
 #include "program.h"
 #include "reflection.h"
 #include "template_utils.h"
-#include "wrappers.h"
+#include "utils.h"
 
 namespace Graphics
 {
@@ -30,6 +31,7 @@ namespace Graphics
         DefineExceptionInline(cant_load_image, :exception, "Can't load an image.",
             (std::string,name,"Name")
         )
+        DefineExceptionInline(no_free_texture_slots, :exception, "Out of free texture slots.",)
 
         DefineExceptionBase(shader_exception, :exception)
         //{
@@ -75,6 +77,239 @@ namespace Graphics
         }
     }
 
+    class Image
+    {
+        std::vector<u8vec4> data;
+        int width = 0;
+      public:
+        enum Format {png, tga};
+
+        Image() {}
+        Image(ivec2 size, const char *ptr = 0)
+        {
+            FromMemory(size, ptr);
+        }
+        Image(std::string fname, bool flip_y = 1)
+        {
+            FromFile(fname, flip_y);
+        }
+        ivec2 Size() const {return {width, int(data.size()) / width};}
+        const u8vec4 *Data() const {return data.data();}
+        u8vec4 Get(ivec2 pos) const
+        {
+            pos = clamp(pos, 0, Size());
+            return data[pos.x + pos.y * width];
+        }
+        void Set(ivec2 pos, u8vec4 v)
+        {
+            if ((pos < 0).any() || (pos >= Size()).any())
+                return;
+            data[pos.x + pos.y * width] = v;
+        }
+
+        void FromMemory(ivec2 size, const char *ptr = 0)
+        {
+            width = size.x;
+            data.resize(size.product());
+            if (ptr)
+                std::copy(ptr, ptr + size.product() * sizeof(u8vec4), (char *)data.data());
+        }
+        void FromFile(std::string fname, bool flip_y = 1)
+        {
+            stbi_set_flip_vertically_on_load(flip_y); // This just sets an internal flag, shouldn't be slow.
+            ivec2 size;
+            [[maybe_unused]] int components;
+            char *ptr = (char *)stbi_load(fname.c_str(), &size.x, &size.y, &components, 4);
+            if (!ptr)
+            {
+                width = 0;
+                throw cant_load_image(fname);
+            }
+            FromMemory(size, ptr);
+            stbi_image_free(ptr);
+        }
+        void Destroy()
+        {
+            data = {};
+            width = 0;
+        }
+
+        void SaveToFile(Format format, std::string fname)
+        {
+            switch (format)
+            {
+              case png:
+                stbi_write_png(fname.c_str(), Size().x, Size().y, 4, data.data(), width * sizeof(u8vec4));
+                return;
+              case tga:
+                stbi_write_tga(fname.c_str(), Size().x, Size().y, 4, data.data());
+                return;
+            }
+        }
+    };
+
+    class Texture
+    {
+        class HandleFuncs
+        {
+            template <typename> friend class ::Utils::Handle;
+            static GLuint Create() {GLuint value; glGenTextures(1, &value); return value;}
+            static void Destroy(GLuint value) {glDeleteTextures(1, &value);}
+            static void Error() {throw cant_create_gl_resource("Texture");}
+        };
+        using Handle = Utils::Handle<HandleFuncs>;
+
+        using SlotAllocator = Utils::ResourceAllocator<int, int>;
+        inline static SlotAllocator slot_allocator{64};
+
+        Handle handle;
+        int slot = SlotAllocator::not_allocated;
+
+      public:
+        static void SetActiveSlot(int slot) // You don't usually need to call this manually.
+        {
+            static int old_slot = 0;
+            if (slot == old_slot)
+                return;
+            old_slot = slot;
+            glActiveTexture(GL_TEXTURE0 + slot);
+        }
+
+        enum InterpMode
+        {
+            nearest,
+            linear,
+            min_nearest_mag_linear,
+            min_linear_mag_nearest,
+        };
+        enum WrapMode
+        {
+            clamp  = GL_CLAMP_TO_EDGE,
+            mirror = GL_MIRRORED_REPEAT,
+            repeat = GL_REPEAT,
+            fill   = OnPC(GL_CLAMP_TO_BORDER) OnMobile(GL_CLAMP_TO_EDGE),
+        };
+
+        Texture() {}
+        Texture(InterpMode mode, ivec2 size, const u8vec4 *data = 0) // Creates and attaches the texture.
+        {
+            Create();
+            SetData(size, data);
+            Interpolation(mode);
+        }
+        Texture(const Image &img, InterpMode mode) // Creates and attaches the texture.
+        {
+            Create();
+            SetData(img);
+            Interpolation(mode);
+        }
+
+        void Create()
+        {
+            handle.create({});
+        }
+        void Destroy()
+        {
+            Detach();
+            handle.destroy();
+        }
+
+        void Attach() // The texture must be created first. Consecutive calls just activate a slot to which the texture was attached.
+        {
+            DebugAssert("Attempt to attach a null texture.", *handle);
+            if (slot != SlotAllocator::not_allocated) // Already attached.
+            {
+                SetActiveSlot(slot);
+                return;
+            }
+            slot = slot_allocator.alloc();
+            if (slot == SlotAllocator::not_allocated)
+                throw no_free_texture_slots();
+            SetActiveSlot(slot);
+            glBindTexture(GL_TEXTURE_2D, *handle);
+        }
+        void Detach()
+        {
+            if (slot == SlotAllocator::not_allocated)
+                return; // Not attached.
+            SetActiveSlot(slot);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            slot_allocator.free(slot);
+            slot = SlotAllocator::not_allocated;
+        }
+
+        int Slot() const
+        {
+            return slot;
+        }
+
+        void SetData(ivec2 size, const u8vec4 *data = 0) // Attaches the texture.
+        {
+            Attach();
+            glTexImage2D(GL_TEXTURE_2D, 0, OnPC(GL_RGBA8) OnMobile(GL_RGBA), size.x, size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        }
+        void SetData(const Image &img) // Attaches the texture.
+        {
+            SetData(img.Size(), img.Data());
+        }
+
+        void SetDataPart(ivec2 pos, ivec2 size, const u8vec4 *data) // Attaches the texture.
+        {
+            Attach();
+            glTexSubImage2D(GL_TEXTURE_2D, 0, pos.x, pos.y, size.x, size.y, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        }
+        void SetDataPart(ivec2 pos, const Image &img) // Attaches the texture.
+        {
+            SetDataPart(pos, img.Size(), img.Data());
+        }
+
+        void Interpolation(InterpMode mode) // Attaches the texture.
+        {
+            Attach();
+            GLenum min_mode, mag_mode;
+            if (mode == nearest || mode == min_nearest_mag_linear)
+                min_mode = GL_NEAREST;
+            else
+                min_mode = GL_LINEAR;
+            if (mode == nearest || mode == min_linear_mag_nearest)
+                mag_mode = GL_NEAREST;
+            else
+                mag_mode = GL_LINEAR;
+
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_mode);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_mode);
+        }
+
+        void WrapX(WrapMode mode) // Attaches the texture.
+        {
+            Attach();
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (GLuint)mode);
+        }
+        void WrapY(WrapMode mode) // Attaches the texture.
+        {
+            Attach();
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (GLuint)mode);
+        }
+        void Wrap(WrapMode mode) // Attaches the texture.
+        {
+            WrapX(mode);
+            WrapY(mode);
+        }
+
+        static void SetMaxTextureCount(int count) // If you have any attached textures when calling this, it does nothing.
+        {
+            if (slot_allocator.current_size() != 0)
+                return;
+            slot_allocator.resize(count);
+        }
+
+        ~Texture()
+        {
+            if (slot != SlotAllocator::not_allocated)
+                slot_allocator.free(slot); // OpenGL will unbind the deleted texture automatically.
+        }
+    };
+
     template <typename T> const char *GlslTypeName()
     {
         using namespace TemplateUtils::CexprStr;
@@ -103,6 +338,10 @@ namespace Graphics
             else
                 return str_lit_cat<Prefix, Body, str_lit<T::width + '0', 'x', T::height + '0'>>::value;
         }
+        else if constexpr (std::is_same_v<T, Texture>)
+        {
+            return "sampler2D";
+        }
         else
         {
             static_assert(std::is_void_v<T>, "No name for this type.");
@@ -110,83 +349,13 @@ namespace Graphics
         }
     }
 
-    class Image
-    {
-        std::vector<u8vec4> data;
-        int width = 0;
-      public:
-        enum Format {png, tga};
-
-        Image() {}
-        Image(ivec2 size, const char *ptr = 0)
-        {
-            FromMemory(size, ptr);
-        }
-        Image(std::string fname, bool flip_y = 0)
-        {
-            FromFile(fname, flip_y);
-        }
-        ivec2 Size() const {return {width, int(data.size()) / width};}
-        u8vec4 Get(ivec2 pos) const
-        {
-            pos = clamp(pos, 0, Size());
-            return data[pos.x + pos.y * width];
-        }
-        void Set(ivec2 pos, u8vec4 v)
-        {
-            if ((pos < 0).any() || (pos >= Size()).any())
-                return;
-            data[pos.x + pos.y * width] = v;
-        }
-
-        void FromMemory(ivec2 size, const char *ptr = 0)
-        {
-            width = size.x;
-            data.resize(size.product());
-            if (ptr)
-                std::copy(ptr, ptr + size.product() * sizeof(u8vec4), (char *)data.data());
-        }
-        void FromFile(std::string fname, bool flip_y = 0)
-        {
-            stbi_set_flip_vertically_on_load(flip_y); // This just sets an internal flag, shouldn't be slow.
-            ivec2 size;
-            [[maybe_unused]] int components;
-            char *ptr = (char *)stbi_load(fname.c_str(), &size.x, &size.y, &components, 4);
-            if (!ptr)
-            {
-                width = 0;
-                throw cant_load_image(fname);
-            }
-            *this = Image(size, ptr);
-            stbi_image_free(ptr);
-        }
-        void Destroy()
-        {
-            data = {};
-            width = 0;
-        }
-
-        void SaveToFile(Format format, std::string fname)
-        {
-            switch (format)
-            {
-              case png:
-                stbi_write_png(fname.c_str(), Size().x, Size().y, 4, data.data(), width * sizeof(u8vec4));
-                return;
-              case tga:
-                stbi_write_tga(fname.c_str(), Size().x, Size().y, 4, data.data());
-                return;
-            }
-        }
-    };
-
     class Buffer
     {
-        template <typename> friend class ::Wrappers::Handle;
+        template <typename> friend class ::Utils::Handle;
         static GLuint Create() {GLuint value; glGenBuffers(1, &value); return value;}
         static void Destroy(GLuint value) {glDeleteBuffers(1, &value);} \
         static void Error() {throw cant_create_gl_resource("Buffer");}
-        using Handle = Wrappers::Handle<Buffer>;
+        using Handle = Utils::Handle<Buffer>;
         Handle handle;
 
       public:
@@ -343,11 +512,11 @@ namespace Graphics
 
         class SeparateShader
         {
-            template <typename> friend class ::Wrappers::Handle;
+            template <typename> friend class ::Utils::Handle;
             static GLuint Create(ShaderType type) {return glCreateShader((GLenum)type);}
             static void Destroy(GLuint value) {glDeleteShader(value);}
             static void Error(ShaderType) {throw cant_create_gl_resource("Shader");}
-            using Handle = Wrappers::Handle<SeparateShader>;
+            using Handle = Utils::Handle<SeparateShader>;
             Handle object;
           public:
             SeparateShader() {}
@@ -380,11 +549,11 @@ namespace Graphics
 
         class Program
         {
-            template <typename> friend class ::Wrappers::Handle;
+            template <typename> friend class ::Utils::Handle;
             static GLuint Create() {return glCreateProgram();}
             static void Destroy(GLuint value) {glDeleteProgram(value);}
             static void Error() {throw cant_create_gl_resource("Shader program");}
-            using Handle = Wrappers::Handle<Program>;
+            using Handle = Utils::Handle<Program>;
             Handle object;
           public:
             Program() {}
@@ -480,28 +649,32 @@ namespace Graphics
                     binding = sh;
                     glUseProgram(sh);
                 }
-                     if constexpr (std::is_same_v<T, float       >) glUniform1f (loc, object);
-                else if constexpr (std::is_same_v<T, fvec2       >) glUniform2f (loc, object.x, object.y);
-                else if constexpr (std::is_same_v<T, fvec3       >) glUniform3f (loc, object.x, object.y, object.z);
-                else if constexpr (std::is_same_v<T, fvec4       >) glUniform4f (loc, object.x, object.y, object.z, object.w);
-                else if constexpr (std::is_same_v<T, int         >) glUniform1i (loc, object);
-                else if constexpr (std::is_same_v<T, ivec2       >) glUniform2i (loc, object.x, object.y);
-                else if constexpr (std::is_same_v<T, ivec3       >) glUniform3i (loc, object.x, object.y, object.z);
-                else if constexpr (std::is_same_v<T, ivec4       >) glUniform4i (loc, object.x, object.y, object.z, object.w);
-                else if constexpr (std::is_same_v<T, unsigned int>) glUniform1ui(loc, object);
-                else if constexpr (std::is_same_v<T, uvec2       >) glUniform2ui(loc, object.x, object.y);
-                else if constexpr (std::is_same_v<T, uvec3       >) glUniform3ui(loc, object.x, object.y, object.z);
-                else if constexpr (std::is_same_v<T, uvec4       >) glUniform4ui(loc, object.x, object.y, object.z, object.w);
-                else if constexpr (std::is_same_v<T, fmat2       >) glUniformMatrix2fv(loc, 1, 0, object.as_array());
-                else if constexpr (std::is_same_v<T, fmat3       >) glUniformMatrix3fv(loc, 1, 0, object.as_array());
-                else if constexpr (std::is_same_v<T, fmat4       >) glUniformMatrix4fv(loc, 1, 0, object.as_array());
-                else if constexpr (std::is_same_v<T, fmat3x2     >) glUniformMatrix3x2fv(loc, 1, 0, object.as_array());
-                else if constexpr (std::is_same_v<T, fmat4x2     >) glUniformMatrix4x2fv(loc, 1, 0, object.as_array());
-                else if constexpr (std::is_same_v<T, fmat2x3     >) glUniformMatrix2x3fv(loc, 1, 0, object.as_array());
-                else if constexpr (std::is_same_v<T, fmat4x3     >) glUniformMatrix4x3fv(loc, 1, 0, object.as_array());
-                else if constexpr (std::is_same_v<T, fmat2x4     >) glUniformMatrix2x4fv(loc, 1, 0, object.as_array());
-                else if constexpr (std::is_same_v<T, fmat3x4     >) glUniformMatrix3x4fv(loc, 1, 0, object.as_array());
-                else static_assert(std::is_void_v<T>, "Uniforms of this type are not supported.");
+                if constexpr (std::is_same_v<T, Texture>)
+                {
+                    glUniform1i(loc, object.Slot());
+                }
+                else if constexpr (std::is_same_v<type, float       >) glUniform1f (loc, object);
+                else if constexpr (std::is_same_v<type, fvec2       >) glUniform2f (loc, object.x, object.y);
+                else if constexpr (std::is_same_v<type, fvec3       >) glUniform3f (loc, object.x, object.y, object.z);
+                else if constexpr (std::is_same_v<type, fvec4       >) glUniform4f (loc, object.x, object.y, object.z, object.w);
+                else if constexpr (std::is_same_v<type, int         >) glUniform1i (loc, object);
+                else if constexpr (std::is_same_v<type, ivec2       >) glUniform2i (loc, object.x, object.y);
+                else if constexpr (std::is_same_v<type, ivec3       >) glUniform3i (loc, object.x, object.y, object.z);
+                else if constexpr (std::is_same_v<type, ivec4       >) glUniform4i (loc, object.x, object.y, object.z, object.w);
+                else if constexpr (std::is_same_v<type, unsigned int>) glUniform1ui(loc, object);
+                else if constexpr (std::is_same_v<type, uvec2       >) glUniform2ui(loc, object.x, object.y);
+                else if constexpr (std::is_same_v<type, uvec3       >) glUniform3ui(loc, object.x, object.y, object.z);
+                else if constexpr (std::is_same_v<type, uvec4       >) glUniform4ui(loc, object.x, object.y, object.z, object.w);
+                else if constexpr (std::is_same_v<type, fmat2       >) glUniformMatrix2fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, fmat3       >) glUniformMatrix3fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, fmat4       >) glUniformMatrix4fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, fmat3x2     >) glUniformMatrix3x2fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, fmat4x2     >) glUniformMatrix4x2fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, fmat2x3     >) glUniformMatrix2x3fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, fmat4x3     >) glUniformMatrix4x3fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, fmat2x4     >) glUniformMatrix2x4fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, fmat3x4     >) glUniformMatrix3x4fv(loc, 1, 0, object.as_array());
+                else static_assert(std::is_void_v<type>, "Uniforms of this type are not supported.");
                 return object;
             }
         };

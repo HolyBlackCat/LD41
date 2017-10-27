@@ -72,6 +72,7 @@
 		<Unit filename="src/input.h" />
 		<Unit filename="src/main.cpp" />
 		<Unit filename="src/mat.h" />
+		<Unit filename="src/platform.h" />
 		<Unit filename="src/preprocessor.h" />
 		<Unit filename="src/program.cpp" />
 		<Unit filename="src/program.h" />
@@ -80,9 +81,9 @@
 		<Unit filename="src/template_utils.h" />
 		<Unit filename="src/ui.cpp" />
 		<Unit filename="src/ui.h" />
+		<Unit filename="src/utils.h" />
 		<Unit filename="src/window.cpp" />
 		<Unit filename="src/window.h" />
-		<Unit filename="src/wrappers.h" />
 		<Extensions>
 			<code_completion />
 			<envvars />

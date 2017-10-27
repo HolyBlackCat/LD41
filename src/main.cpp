@@ -13,19 +13,19 @@
 #include "template_utils.h"
 #include "ui.h"
 #include "window.h"
-#include "wrappers.h"
+#include "utils.h"
 
 using namespace Graphics;
 using namespace Input;
 
 ReflectStruct(Attributes, (
-    (fvec2)(pos),
-    (fvec3)(color),
+    (fvec2)(pos,tex_coord),
 ))
 
 ReflectStruct(Uniforms, (
     (Shader::VertexUniform<fmat2>)(matrix),
     (Shader::VertexUniform<fvec2>)(screen_size),
+    (Shader::FragmentUniform<Texture>)(texture),
 ))
 
 int main(int, char **)
@@ -35,28 +35,30 @@ int main(int, char **)
     Shader sh;
     Uniforms uni;
     sh.Create<Attributes>(
-        {"vec3 color"},
+        {"vec2 tex_coord"},
         R"(void main()
         {
             gl_Position = vec4(u_matrix * a_pos / u_screen_size, 0, 1);
-            v_color = a_color;
+            v_tex_coord = a_tex_coord;
         })",
         R"(void main()
         {
-            gl_FragColor = vec4(v_color,1);
+            gl_FragColor = texture2D(u_texture, v_tex_coord);
         })",
         &uni
     );
     uni.screen_size = fvec2(4,3);
+    Texture tex(Image("test.png"), Texture::linear);
+    uni.texture = tex;
 
     Attributes data[]
     {
-        {{0,0},{1,0,0}},
-        {{1,0},{0,1,0}},
-        {{0,1},{0,0,1}},
-        {{0,0},{0.5,0,0}},
-        {{-0.5,0},{0,0.5,0}},
-        {{0,-0.5},{0,0,0.5}},
+        {{-1,-1},{0,0}},
+        {{1,-1},{1,0}},
+        {{-1,1},{0,1}},
+        {{-1,1},{0,1}},
+        {{1,-1},{1,0}},
+        {{1,1},{1,1}},
     };
     VertexBuffer buf(6, data);
 
