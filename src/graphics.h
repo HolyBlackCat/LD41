@@ -382,6 +382,8 @@ namespace Graphics
 
     template <typename T> class VertexBuffer
     {
+        static_assert(Reflection::Interface::field_count<T>() || std::is_void_v<T>, "T must be reflected or be `void`.");
+
         inline static GLuint binding = 0, draw_binding = 0;
         inline static int active_attribute_count = 0;
 
@@ -474,11 +476,11 @@ namespace Graphics
         {
             BindStorage();
             size = count;
-            glBufferData(GL_ARRAY_BUFFER, count * sizeof(T), data, usage);
+            glBufferData(GL_ARRAY_BUFFER, count * max(1u, sizeof(T)), data, usage);
         }
         void SetDataPart(int obj_offset, int count, const T *data) // Binds storage.
         {
-            SetDataPartBytes(obj_offset * sizeof(T), count * sizeof(T), (const char *)data);
+            SetDataPartBytes(obj_offset * sizeof(T), count * max(1u, sizeof(T)), (const char *)data);
         }
         void SetDataPartBytes(int offset, int bytes, const char *data) // Binds storage.
         {
