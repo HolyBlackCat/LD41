@@ -5,6 +5,7 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#include <utility>
 
 #include <GLFL/glfl.h>
 #include <stb_image.h>
@@ -392,6 +393,7 @@ namespace Graphics
 
       public:
         VertexBuffer() {}
+        VertexBuffer(decltype(nullptr)) : buffer(nullptr) {}
         VertexBuffer(int count, const T *data = 0, Usage usage = static_draw) : buffer(nullptr)
         {
             if (count)
@@ -410,6 +412,10 @@ namespace Graphics
                     binding = 0; // GL unbinds a buffer when it's deleted.
                 buffer.destroy();
             }
+        }
+        explicit operator bool() const
+        {
+            return *buffer;
         }
 
         int Size() const {return size;}
@@ -501,6 +507,80 @@ namespace Graphics
         ~VertexBuffer()
         {
             Destroy(); // We need to call this to unbind if necessary.
+        }
+    };
+
+    template <typename T, Primitive P> class RenderQueue
+    {
+        static_assert(Reflection::Interface::field_count<T>(), "T must be reflected.");
+        std::vector<T> data;
+        int pos = 0;
+        VertexBuffer<T> buffer;
+      public:
+        RenderQueue() {}
+        RenderQueue(int prim_count)
+        {
+            Create(prim_count);
+        }
+        void Create(int prim_count)
+        {
+            if (prim_count < 1)
+                prim_count = 1;
+            if constexpr (P == lines)
+                prim_count *= 2;
+            else if constexpr (P == triangles)
+                prim_count *= 3;
+            std::vector<T> new_data(prim_count); // Extra exception safety.
+            buffer.Create();
+            buffer.SetData(prim_count);
+            data = std::move(new_data);
+            pos = 0;
+        }
+        void Destroy()
+        {
+            data = {};
+            buffer.Destroy();
+        }
+        explicit operator bool() const
+        {
+            return bool(buffer);
+        }
+
+        void Flush()
+        {
+            DebugAssert("Attempt to flush a null render queue.", buffer);
+            buffer.SetDataPart(0, pos, data.data());
+            buffer.Draw(P, pos);
+            pos = 0;
+        }
+        void Point(const T &a)
+        {
+            static_assert(P == points, "This function for point queues only.");
+            if (pos + 1 > int(data.size()))
+                Flush();
+            data[pos++] = a;
+        }
+        void Line(const T &a, const T &b)
+        {
+            static_assert(P == lines, "This function for line queues only.");
+            if (pos + 2 > int(data.size()))
+                Flush();
+            data[pos++] = a;
+            data[pos++] = b;
+        }
+        void Triangle(const T &a, const T &b, const T &c)
+        {
+            static_assert(P == triangles, "This function for triangle queues only.");
+            if (pos + 3 > int(data.size()))
+                Flush();
+            data[pos++] = a;
+            data[pos++] = b;
+            data[pos++] = c;
+        }
+        void Quad(const T &a, const T &b, const T &c, const T &d) // Not really a quad, but rather two triangles.
+        {
+            Triangle(a, b, d);
+            Triangle(d, b, c);
         }
     };
 

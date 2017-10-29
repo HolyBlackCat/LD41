@@ -51,16 +51,7 @@ int main(int, char **)
     Texture tex(Image("test.png"), Texture::linear);
     uni.texture = tex;
 
-    Attributes data[]
-    {
-        {{-1,-1},{0,0}},
-        {{1,-1},{1,0}},
-        {{-1,1},{0,1}},
-        {{-1,1},{0,1}},
-        {{1,-1},{1,0}},
-        {{1,1},{1,1}},
-    };
-    VertexBuffer buf(6, data);
+    RenderQueue<Attributes, triangles> que(10);
 
     while (1)
     {
@@ -72,7 +63,15 @@ int main(int, char **)
         Graphics::CheckErrors();
         glClear(GL_COLOR_BUFFER_BIT);
         uni.matrix = fmat2::rotate2D(Events::Time() / 60.);
-        buf.Draw(triangles);
+        for (int i = 0; i < 50; i++)
+        {
+            fvec2 pos = fmat2::rotate2D(i) /mul/ fvec2(cos(8*i+Events::Time()/500.)+1, 0);
+            que.Quad({pos + fvec2(-.1,-.1),{0,0}},
+                     {pos + fvec2( .1,-.1),{1,0}},
+                     {pos + fvec2( .1, .1),{1,1}},
+                     {pos + fvec2(-.1, .1),{0,1}});
+        }
+        que.Flush();
 
         win.Swap();
     }
