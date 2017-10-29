@@ -78,6 +78,19 @@ namespace Graphics
         }
     }
 
+    enum ClearBits
+    {
+        color   = GL_COLOR_BUFFER_BIT,
+        depth   = GL_DEPTH_BUFFER_BIT,
+        stencil = GL_STENCIL_BUFFER_BIT,
+    };
+    inline ClearBits operator|(ClearBits a, ClearBits b) {return ClearBits(a | b);}
+
+    inline void Clear(ClearBits bits)
+    {
+        glClear(bits);
+    }
+
     class Image
     {
         std::vector<u8vec4> data;

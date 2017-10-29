@@ -61,11 +61,11 @@ int main(int, char **)
             win.ToggleFullscreen();
 
         Graphics::CheckErrors();
-        glClear(GL_COLOR_BUFFER_BIT);
+        Clear(color);
         uni.matrix = fmat2::rotate2D(Events::Time() / 60.);
         for (int i = 0; i < 50; i++)
         {
-            fvec2 pos = fmat2::rotate2D(i) /mul/ fvec2(cos(8*i+Events::Time()/500.)+1, 0);
+            fvec2 pos = fmat2::rotate2D(i) /mul/ fvec2(cos(Events::Time()/60.)+1, 0);
             que.Quad({pos + fvec2(-.1,-.1),{0,0}},
                      {pos + fvec2( .1,-.1),{1,0}},
                      {pos + fvec2( .1, .1),{1,1}},
