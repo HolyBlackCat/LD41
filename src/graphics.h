@@ -205,6 +205,9 @@ namespace Graphics
         };
 
         Texture() {}
+        Texture(Texture &&) = default;
+        Texture &operator=(Texture &&) = default;
+
         Texture(InterpMode mode, ivec2 size, const u8vec4 *data = 0) // Creates and attaches the texture.
         {
             Create();
@@ -406,6 +409,9 @@ namespace Graphics
 
       public:
         VertexBuffer() {}
+        VertexBuffer(VertexBuffer &&) = default;
+        VertexBuffer &operator=(VertexBuffer &&) = default;
+
         VertexBuffer(decltype(nullptr)) : buffer(nullptr) {}
         VertexBuffer(int count, const T *data = 0, Usage usage = static_draw) : buffer(nullptr)
         {
@@ -416,6 +422,7 @@ namespace Graphics
         void Create()
         {
             buffer.create();
+            size = 0;
         }
         void Destroy()
         {
@@ -688,6 +695,10 @@ namespace Graphics
         SeparateShader vertex, fragment;
         inline static GLuint binding = 0;
       public:
+        Shader() {}
+        Shader(Shader &&) = default;
+        Shader &operator=(Shader &&) = default;
+
         struct Config
         {
             std::string version = "330 compatibility";
@@ -705,7 +716,6 @@ namespace Graphics
             int location;
             std::string name;
         };
-        Shader() {}
         void CreateRaw(const std::string &v_src, const std::string &f_src, const std::vector<Attribute> &attributes = {})
         {
             Program p(nullptr);

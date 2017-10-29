@@ -96,14 +96,14 @@ namespace Utils
 
         Handle(const Handle &) = delete;
 
-        Handle(Handle &&o) noexcept(noexcept(handle_t(o.handle), o.handle = null())): handle(o.handle)
+        Handle(Handle &&o) noexcept(noexcept(handle_t(o.handle)) && noexcept(o.handle = null())) : handle(o.handle)
         {
             o.handle = null();
         }
 
         Handle &operator=(const Handle &) = delete;
 
-        Handle &operator=(Handle &&o) noexcept(noexcept(handle = o.handle, o.handle = null()))
+        Handle &operator=(Handle &&o) noexcept(noexcept(handle = o.handle) && noexcept(o.handle = null()))
         {
             if (&o == this)
                 return *this;

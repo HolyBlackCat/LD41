@@ -32,20 +32,20 @@ namespace TemplateUtils
 
         MoveFunc(const MoveFunc &) noexcept {}
 
-        MoveFunc(MoveFunc &&o) noexcept(noexcept(T::AtMove(std::declval<MoveFunc &>(), o)))
+        MoveFunc(MoveFunc &&o) noexcept(noexcept(T::OnMove(std::declval<const T &>(), std::declval<const T &>())))
         {
             static_assert(std::is_base_of_v<MoveFunc<T>, T>, "This is a CRTP base.");
-            T::AtMove(*this, o);
+            T::OnMove(static_cast<const T &>(*this), static_cast<const T &>(o));
         }
 
         MoveFunc &operator=(const MoveFunc &) noexcept {}
 
-        MoveFunc &operator=(MoveFunc &&o) noexcept(noexcept(T::AtMove(std::declval<MoveFunc &>(), o)))
+        MoveFunc &operator=(MoveFunc &&o) noexcept(noexcept(T::OnMove(std::declval<const T &>(), std::declval<const T &>())))
         {
             static_assert(std::is_base_of_v<MoveFunc<T>, T>, "This is a CRTP base.");
             if (&o == this)
                 return *this;
-            T::AtMove(*this, o);
+            T::OnMove(static_cast<const T &>(*this), static_cast<const T &>(o));
             return *this;
         }
     };

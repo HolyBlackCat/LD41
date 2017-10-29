@@ -18,7 +18,7 @@ class Window
   : TemplateUtils::MoveFunc<Window>
 {
     // Window data named "*" (`SDL_SetWindowData(window, "*", value)`) is reserved to hold a pointer to the associated window object.
-
+    friend TemplateUtils::MoveFunc<Window>;
   public:
     DefineExceptionBase(exception)
     DefineExceptionStatic(cant_init_sdl, :exception, "Can't initialize SDL video subsystem.",)
@@ -187,6 +187,8 @@ class Window
 
   public:
     Window() {}
+    Window(Window &&) = default;
+    Window &operator=(Window &&) = default;
     Window(std::string name, ivec2 size, Settings settings = {});
     ~Window();
     void Create(std::string new_name, ivec2 new_size, Settings new_settings = {});
