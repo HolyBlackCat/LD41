@@ -35,13 +35,16 @@ int main(int, char **)
     Shader sh;
     Uniforms uni;
     sh.Create<Attributes>(
-        {"vec2 tex_coord"},
-        R"(void main()
+        R"(
+        VARYING(vec2,tex_coord)
+        void main()
         {
             gl_Position = vec4(u_matrix * a_pos / u_screen_size, 0, 1);
             v_tex_coord = a_tex_coord;
         })",
-        R"(void main()
+        R"(
+        VARYING(vec2,tex_coord)
+        void main()
         {
             gl_FragColor = texture2D(u_texture, v_tex_coord);
         })",

@@ -18,6 +18,25 @@
 #include "template_utils.h"
 #include "utils.h"
 
+/* GLSL version chart:
+    1.10.59		2.0		April 2004		#version 110
+    1.20.8		2.1		September 2006	#version 120
+    1.30.10		3.0		August 2008		#version 130
+    1.40.08		3.1		March 2009		#version 140
+    1.50.11		3.2		August 2009		#version 150
+    3.30.6		3.3		February 2010	#version 330
+    4.00.9		4.0		March 2010		#version 400
+    4.10.6		4.1		July 2010		#version 410
+    4.20.11		4.2		August 2011		#version 420
+    4.30.8		4.3		August 2012		#version 430
+    4.40		4.4		July 2013		#version 440
+    4.50		4.5		August 2014		#version 450
+    1.00        ES 2                    #version 100
+
+    GLSL ES can be tested with `#ifdef GL_ES`.
+    GLSL ES lacks default precision for float inside of fragment shaders.
+*/
+
 namespace Graphics
 {
     inline namespace Exceptions
@@ -78,17 +97,75 @@ namespace Graphics
         }
     }
 
-    enum ClearBits
+    inline namespace Misc
     {
-        color   = GL_COLOR_BUFFER_BIT,
-        depth   = GL_DEPTH_BUFFER_BIT,
-        stencil = GL_STENCIL_BUFFER_BIT,
-    };
-    inline ClearBits operator|(ClearBits a, ClearBits b) {return ClearBits(a | b);}
+        enum ClearBits
+        {
+            color   = GL_COLOR_BUFFER_BIT,
+            depth   = GL_DEPTH_BUFFER_BIT,
+            stencil = GL_STENCIL_BUFFER_BIT,
+        };
+        inline ClearBits operator|(ClearBits a, ClearBits b) {return ClearBits(a | b);}
 
-    inline void Clear(ClearBits bits)
-    {
-        glClear(bits);
+        inline void Clear(ClearBits bits)
+        {
+            glClear(bits);
+        }
+
+
+        namespace Blending
+        {
+            enum Factors
+            {
+                zero                 = GL_ZERO,
+                one                  = GL_ONE,
+                src                  = GL_SRC_COLOR,
+                one_minus_src        = GL_ONE_MINUS_SRC_COLOR,
+                dst                  = GL_DST_COLOR,
+                one_minus_dst        = GL_ONE_MINUS_DST_COLOR,
+                src_a                = GL_SRC_ALPHA,
+                one_minus_src_a      = GL_ONE_MINUS_SRC_ALPHA,
+                dst_a                = GL_DST_ALPHA,
+                one_minus_dst_a      = GL_ONE_MINUS_DST_ALPHA,
+                constant             = GL_CONSTANT_COLOR,
+                one_minus_constant   = GL_ONE_MINUS_CONSTANT_COLOR,
+                constant_a           = GL_CONSTANT_ALPHA,
+                one_minus_constant_a = GL_ONE_MINUS_CONSTANT_ALPHA,
+                src_a_saturate       = GL_SRC_ALPHA_SATURATE,
+                OnPC
+                (
+                    src1             = GL_SRC1_COLOR,
+                    one_minus_src1   = GL_ONE_MINUS_SRC1_COLOR,
+                    src1_a           = GL_SRC1_ALPHA,
+                    one_minus_src1_a = GL_ONE_MINUS_SRC1_ALPHA,
+                )
+            };
+            enum Equations
+            {
+                eq_add              = GL_FUNC_ADD,
+                eq_subtract         = GL_FUNC_SUBTRACT,
+                eq_reverse_subtract = GL_FUNC_REVERSE_SUBTRACT,
+                OnPC
+                (
+                    eq_min          = GL_MIN,
+                    eq_max          = GL_MAX,
+                )
+            };
+
+            // Func(a,b) and Equation(a) set same parameters for both color and alpha blending.
+            // Func(a,b,c,d) and Equation(a,b) set same parameters for color and alpha blending separately.
+            inline void Enable() {glEnable(GL_BLEND);}
+            inline void Disable() {glDisable(GL_BLEND);}
+            inline void Func(Factors src, Factors dst)                             {glBlendFunc(src, dst);}
+            inline void Func(Factors src, Factors dst, Factors srca, Factors dsta) {glBlendFuncSeparate(src, dst, srca, dsta);}
+            inline void Equation(Equations eq) {glBlendEquation(eq);}
+            inline void Equation(Equations eq, Equations eqa) {glBlendEquationSeparate(eq, eqa);}
+
+            inline void FuncOverwrite     () {Func(one, zero);}
+            inline void FuncNormalSimple  () {Func(src_a, one_minus_src_a);} // Resulting alpha is incorrect.
+            inline void FuncNormalRawToPre() {Func(src_a, one_minus_src_a, one, one_minus_src_a);} // Output is premultiplied.
+            inline void FuncNormalPre     () {Func(one, one_minus_src_a);} // Source and and output are premultiplited
+        }
     }
 
     class Image
@@ -788,12 +865,14 @@ namespace Graphics
 
         template <typename ReflAttributes = void, // Has to be reflected. Regardless of reflected types, shader will get them as floats.
                   typename ReflUniforms   = void> // Has to be reflected and contain only [Vertex|Fragment]Uniform structs.
-        void Create(const std::vector<std::string> &varyings, const std::string &v_src, const std::string &f_src, ReflUniforms *uniforms = 0, const Config &cfg = {})
+        void Create(const std::string &v_src, const std::string &f_src, ReflUniforms *uniforms = 0, const Config &cfg = {})
         {
             std::string v, f;
             v = "#version " + cfg.version + '\n' + cfg.vertex_header + '\n';
             f = "#version " + cfg.version + '\n' + cfg.fragment_header + '\n';
             std::vector<Attribute> attribute_vector;
+            v += "#define VARYING(type,name) " + cfg.varying_vertex   + " type " + (cfg.varying_prefix.size() ? cfg.varying_prefix + "##name;\n" : "name;\n");
+            f += "#define VARYING(type,name) " + cfg.varying_fragment + " type " + (cfg.varying_prefix.size() ? cfg.varying_prefix + "##name;\n" : "name;\n");
             if constexpr (!std::is_void_v<ReflUniforms>)
             {
                 constexpr int field_count = Reflection::Interface::field_count<ReflUniforms>();
@@ -821,15 +900,6 @@ namespace Graphics
                     v += cfg.attribute + ' ' + GlslTypeName<field_type>() + ' ' + cfg.attribute_prefix + field_name + ";\n";
                     attribute_vector.push_back({int(attribute_vector.size()), cfg.attribute_prefix + field_name});
                 });
-            }
-            for (const auto &it : varyings)
-            {
-                std::string cur = it;
-                auto space_pos = cur.find_last_of(' ');
-                if (space_pos != std::string::npos)
-                    cur.insert(space_pos+1, cfg.varying_prefix);
-                v += cfg.varying_vertex   + ' ' + cur + ";\n";
-                f += cfg.varying_fragment + ' ' + cur + ";\n";
             }
             CreateRaw(v + v_src, f + f_src, attribute_vector);
             if constexpr (!std::is_void_v<ReflUniforms>)
