@@ -11,7 +11,6 @@ static SDL_Window *active_window = 0;
 void Window::OnMove(const Window &/*from*/, const Window &to) noexcept
 {
     SDL_SetWindowData(*to.window, window_data_name_this_ptr, (void *)&to);
-    glfl::set_active_context(to.func_context);
 }
 
 SDL_Window *Window::WindowHandleFuncs::Create(std::string name, ivec2 size, Settings &settings)
