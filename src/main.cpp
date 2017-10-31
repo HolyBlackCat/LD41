@@ -9,6 +9,7 @@
 #include "preprocessor.h"
 #include "program.h"
 #include "reflection.h"
+#include "renderers2d.h"
 #include "string.h"
 #include "template_utils.h"
 #include "ui.h"
@@ -55,6 +56,8 @@ int main(int, char **)
     uni.texture = tex;
 
     RenderQueue<Attributes, triangles> que(10);
+
+    Renderers::Poly2D re(0x10000);
 
     while (1)
     {
