@@ -8,7 +8,7 @@ static constexpr char window_data_name_this_ptr[] = "*";
 
 static SDL_Window *active_window = 0;
 
-void Window::OnMove(const Window &/*from*/, const Window &to) noexcept
+void Window::OnMove(Window &&/*from*/, Window &to) noexcept
 {
     SDL_SetWindowData(*to.window, window_data_name_this_ptr, (void *)&to);
 }

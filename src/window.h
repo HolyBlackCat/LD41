@@ -155,7 +155,7 @@ class Window
     };
 
   private:
-    static void OnMove(const Window &from, const Window &to) noexcept;
+    static void OnMove(Window &&from, Window &to) noexcept;
 
     class WindowHandleFuncs
     {

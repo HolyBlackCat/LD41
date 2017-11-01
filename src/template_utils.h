@@ -26,26 +26,27 @@ namespace TemplateUtils
     template <typename T> using param_types = typename impl::func_types<T>::param_types;
 
 
+    // It's a CRTP base. It expects T to have `static void OnMove(T &&from, T &to)` and will call it on move ctor/assignment.
     template <typename T> struct MoveFunc
     {
         MoveFunc() noexcept {}
 
         MoveFunc(const MoveFunc &) noexcept {}
 
-        MoveFunc(MoveFunc &&o) noexcept(noexcept(T::OnMove(std::declval<const T &>(), std::declval<const T &>())))
+        MoveFunc(MoveFunc &&o) noexcept(noexcept(T::OnMove(std::declval<T &&>(), std::declval<T &>())))
         {
             static_assert(std::is_base_of_v<MoveFunc<T>, T>, "This is a CRTP base.");
-            T::OnMove(static_cast<const T &>(*this), static_cast<const T &>(o));
+            T::OnMove(static_cast<T &&>(o), static_cast<T &>(*this));
         }
 
         MoveFunc &operator=(const MoveFunc &) noexcept {}
 
-        MoveFunc &operator=(MoveFunc &&o) noexcept(noexcept(T::OnMove(std::declval<const T &>(), std::declval<const T &>())))
+        MoveFunc &operator=(MoveFunc &&o) noexcept(noexcept(T::OnMove(std::declval<T &&>(), std::declval<T &>())))
         {
             static_assert(std::is_base_of_v<MoveFunc<T>, T>, "This is a CRTP base.");
             if (&o == this)
                 return *this;
-            T::OnMove(static_cast<const T &>(*this), static_cast<const T &>(o));
+            T::OnMove(static_cast<T &&>(o), static_cast<T &>(*this));
             return *this;
         }
     };
