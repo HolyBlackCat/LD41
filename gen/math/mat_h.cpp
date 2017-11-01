@@ -6,7 +6,7 @@
 #include <sstream>
 
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
-#define VERSION "2.5.1"
+#define VERSION "2.5.2"
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
 
 std::ofstream out_file("mat.h");
@@ -1103,25 +1103,6 @@ if (strncmp(src, start.c_str(), start.size())) {return {};} std::size_t pos = st
                     }
                     l "};}\n";
 
-                    for (int i = 2; i <= std::min(w,h); i++) // Diagonal
-                    {
-                        l "[[nodiscard]] static constexpr vec dia(const vec" << i << "<T> &v) {return {";
-                        for (int hh = 0; hh < h; hh++)
-                        {
-                            for (int ww = 0; ww < w; ww++)
-                            {
-                                if (ww != 0 || hh != 0) l ", ";
-                                if (ww == hh)
-                                {
-                                    if (ww < i) l "v." << field_names_main[ww];
-                                    else l '1';
-                                }
-                                else l '0';
-                            }
-                        }
-                        l "};}\n";
-                    }
-
                     auto MatrixFactoryMethod = [&](int minw, int minh, const char *name, const char *params, const char *sh_params, const char *body, bool float_only = 1)
                     {
                         if (w == minw && h == minh)
@@ -1134,18 +1115,24 @@ if (strncmp(src, start.c_str(), start.size())) {return {};} std::size_t pos = st
                             l "[[nodiscard]] static constexpr vec " << name << '(' << params << ") {return mat" << minw << 'x' << minh << "<T>::" << name << "(" << sh_params << ").to_mat" << w << 'x' << h << "();}\n";
                     };
 
-                    MatrixFactoryMethod(2, 2, "ortho2D", "const vec2<T> &sz", "sz", R"(
-return {2 / sz.x, 0,
-$       0, 2 / sz.y};
-)");
+                    MatrixFactoryMethod(2, 2, "scale", "const vec2<T> &v", "v", R"(
+return {v.x, 0,
+$       0, v.y};
+)", 0);
+                    MatrixFactoryMethod(3, 3, "scale", "const vec3<T> &v", "v", R"(
+return {v.x, 0, 0,
+$       0, v.y, 0,
+$       0, 0, v.z};
+)", 0);
+                    MatrixFactoryMethod(4, 4, "scale", "const vec4<T> &v", "v", R"(
+return {v.x, 0, 0, 0,
+$       0, v.y, 0, 0,
+$       0, 0, v.z, 0,
+$       0, 0, 0, v.w};
+)", 0);
                     MatrixFactoryMethod(3, 2, "ortho2D", "const vec2<T> &min, const vec2<T> &max", "min, max", R"(
 return {2 / (max.x - min.x), 0, (min.x + max.x) / (min.x - max.x),
 $       0, 2 / (max.y - min.y), (min.y + max.y) / (min.y - max.y)};
-)");
-                    MatrixFactoryMethod(4, 3, "ortho", "const vec2<T> &sz, T near, T far", "sz, near, far", R"(
-return {2 / sz.x, 0, 0, 0,
-$       0, 2 / sz.y, 0, 0,
-$       0, 0, 2 / (near - far), (near + far) / (near - far)};
 )");
                     MatrixFactoryMethod(4, 3, "ortho", "const vec2<T> &min, const vec2<T> &max, T near, T far", "min, max, near, far", R"(
 return {2 / (max.x - min.x), 0, 0, (min.x + max.x) / (min.x - max.x),
@@ -1160,10 +1147,14 @@ return {v1.x, v1.y, v1.z, -src.x*v1.x - src.y*v1.y - src.z*v1.z,
 $       v2.x, v2.y, v2.z, -src.x*v2.x - src.y*v2.y - src.z*v2.z,
 $       v3.x, v3.y, v3.z, -src.x*v3.x - src.y*v3.y - src.z*v3.z};
 )");
-                    MatrixFactoryMethod(4, 3, "translate", "const vec3<T> &in", "in", R"(
-return {1, 0, 0, in.x,
-$       0, 1, 0, in.y,
-$       0, 0, 1, in.z};
+                    MatrixFactoryMethod(3, 2, "translate2D", "const vec2<T> &v", "v", R"(
+return {1, 0, v.x,
+$       0, 1, v.y};
+)", 0);
+                    MatrixFactoryMethod(4, 3, "translate", "const vec3<T> &v", "v", R"(
+return {1, 0, 0, v.x,
+$       0, 1, 0, v.y,
+$       0, 0, 1, v.z};
 )", 0);
                     MatrixFactoryMethod(2, 2, "rotate2D", "T angle", "angle", R"(
 T c = std::cos(angle);
@@ -1171,15 +1162,15 @@ T s = std::sin(angle);
 return {c, -s,
 $       s, c};
 )");
-                    MatrixFactoryMethod(3, 3, "rotate_with_normalized_axis", "const vec3<T> &in, T angle", "in, angle", R"(
+                    MatrixFactoryMethod(3, 3, "rotate_with_normalized_axis", "const vec3<T> &axis, T angle", "axis, angle", R"(
 T c = std::cos(angle);
 T s = std::sin(angle);
-return {in.x * in.x * (1 - c) + c, in.x * in.y * (1 - c) - in.z * s, in.x * in.z * (1 - c) + in.y * s,
-$       in.y * in.x * (1 - c) + in.z * s, in.y * in.y * (1 - c) + c, in.y * in.z * (1 - c) - in.x * s,
-$       in.x * in.z * (1 - c) - in.y * s, in.y * in.z * (1 - c) + in.x * s, in.z * in.z * (1 - c) + c};
+return {axis.x * axis.x * (1 - c) + c, axis.x * axis.y * (1 - c) - axis.z * s, axis.x * axis.z * (1 - c) + axis.y * s,
+$       axis.y * axis.x * (1 - c) + axis.z * s, axis.y * axis.y * (1 - c) + c, axis.y * axis.z * (1 - c) - axis.x * s,
+$       axis.x * axis.z * (1 - c) - axis.y * s, axis.y * axis.z * (1 - c) + axis.x * s, axis.z * axis.z * (1 - c) + c};
 )");
-                    MatrixFactoryMethod(3, 3, "rotate", "const vec3<T> &in, T angle", "in, angle", R"(
-return rotate_with_normalized_axis(in.norm(), angle);
+                    MatrixFactoryMethod(3, 3, "rotate", "const vec3<T> &axis, T angle", "axis, angle", R"(
+return rotate_with_normalized_axis(axis.norm(), angle);
 )");
                     MatrixFactoryMethod(4, 4, "perspective", "T yfov, T wh_aspect, T near, T far", "yfov, wh_aspect, near, far", R"(
 yfov = (T)1 / std::tan(yfov / 2);
@@ -1188,21 +1179,6 @@ $       0                , yfov , 0                           , 0               
 $       0                , 0    , (near + far) / (near - far) , 2 * near * far / (near - far) ,
 $       0                , 0    , -1                          , 0                             };
 )");
-                    MatrixFactoryMethod(2, 2, "scale2D", "T s", "s", R"(
-return {s, 0,
-$       0, s};
-)", 0);
-                    MatrixFactoryMethod(3, 3, "scale", "T s", "s", R"(
-return {s, 0, 0,
-$       0, s, 0,
-$       0, 0, s};
-)", 0);
-                    MatrixFactoryMethod(4, 4, "scale4D", "T s", "s", R"(
-return {s, 0, 0, 0,
-$       0, s, 0, 0,
-$       0, 0, s, 0,
-$       0, 0, 0, s};
-)", 0);
                 }
                 { // 2D resizers
                     for (int hhh = 2; hhh <= 4; hhh++)

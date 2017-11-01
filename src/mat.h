@@ -1,7 +1,7 @@
 #ifndef MAT_H_INCLUDED
 #define MAT_H_INCLUDED
 
-// Version 2.5.1 by HolyBlackCat
+// Version 2.5.2 by HolyBlackCat
 
 #include <algorithm>
 #include <cctype>
@@ -737,12 +737,10 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat2x2<TT> to() const {return {TT(x.x),TT(y.x),TT(x.y),TT(y.y)};}
             [[nodiscard]] constexpr mat2x2<T> transpose() const {return {x.x,x.y,y.x,y.y};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 1};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, v.y};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz)
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v)
             {
-                static_assert(is_floating_point, "This function only makes sense for floating-point matrices.");
-                return {2 / sz.x, 0,
-                        0, 2 / sz.y};
+                return {v.x, 0,
+                        0, v.y};
             }
             [[nodiscard]] static constexpr vec rotate2D(T angle)
             {
@@ -751,11 +749,6 @@ namespace Math
                 T s = std::sin(angle);
                 return {c, -s,
                         s, c};
-            }
-            [[nodiscard]] static constexpr vec scale2D(T s)
-            {
-                return {s, 0,
-                        0, s};
             }
             [[nodiscard]] constexpr mat3x2<T> to_mat3x2() const {return {x.x,y.x,0,x.y,y.y,0};}
             [[nodiscard]] constexpr mat4x2<T> to_mat4x2() const {return {x.x,y.x,0,0,x.y,y.y,0,0};}
@@ -846,16 +839,19 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat3x2<TT> to() const {return {TT(x.x),TT(y.x),TT(z.x),TT(x.y),TT(y.y),TT(z.y)};}
             [[nodiscard]] constexpr mat2x3<T> transpose() const {return {x.x,x.y,y.x,y.y,z.x,z.y};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 0, 1, 0};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, 0, v.y, 0};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz) {return mat2x2<T>::ortho2D(sz).to_mat3x2();}
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v) {return mat2x2<T>::scale(v).to_mat3x2();}
             [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &min, const vec2<T> &max)
             {
                 static_assert(is_floating_point, "This function only makes sense for floating-point matrices.");
                 return {2 / (max.x - min.x), 0, (min.x + max.x) / (min.x - max.x),
                         0, 2 / (max.y - min.y), (min.y + max.y) / (min.y - max.y)};
             }
+            [[nodiscard]] static constexpr vec translate2D(const vec2<T> &v)
+            {
+                return {1, 0, v.x,
+                        0, 1, v.y};
+            }
             [[nodiscard]] static constexpr vec rotate2D(T angle) {return mat2x2<T>::rotate2D(angle).to_mat3x2();}
-            [[nodiscard]] static constexpr vec scale2D(T s) {return mat2x2<T>::scale2D(s).to_mat3x2();}
             [[nodiscard]] constexpr mat2x2<T> to_mat2x2() const {return {x.x,y.x,x.y,y.y};}
             [[nodiscard]] constexpr mat2<T> to_mat2() const {return to_mat2x2();}
             [[nodiscard]] constexpr mat4x2<T> to_mat4x2() const {return {x.x,y.x,z.x,0,x.y,y.y,z.y,0};}
@@ -941,11 +937,10 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat4x2<TT> to() const {return {TT(x.x),TT(y.x),TT(z.x),TT(w.x),TT(x.y),TT(y.y),TT(z.y),TT(w.y)};}
             [[nodiscard]] constexpr mat2x4<T> transpose() const {return {x.x,x.y,y.x,y.y,z.x,z.y,w.x,w.y};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 0, 0, 1, 0, 0};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, 0, 0, v.y, 0, 0};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz) {return mat2x2<T>::ortho2D(sz).to_mat4x2();}
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v) {return mat2x2<T>::scale(v).to_mat4x2();}
             [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &min, const vec2<T> &max) {return mat3x2<T>::ortho2D(min, max).to_mat4x2();}
+            [[nodiscard]] static constexpr vec translate2D(const vec2<T> &v) {return mat3x2<T>::translate2D(v).to_mat4x2();}
             [[nodiscard]] static constexpr vec rotate2D(T angle) {return mat2x2<T>::rotate2D(angle).to_mat4x2();}
-            [[nodiscard]] static constexpr vec scale2D(T s) {return mat2x2<T>::scale2D(s).to_mat4x2();}
             [[nodiscard]] constexpr mat2x2<T> to_mat2x2() const {return {x.x,y.x,x.y,y.y};}
             [[nodiscard]] constexpr mat2<T> to_mat2() const {return to_mat2x2();}
             [[nodiscard]] constexpr mat3x2<T> to_mat3x2() const {return {x.x,y.x,z.x,x.y,y.y,z.y};}
@@ -1027,10 +1022,8 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat2x3<TT> to() const {return {TT(x.x),TT(y.x),TT(x.y),TT(y.y),TT(x.z),TT(y.z)};}
             [[nodiscard]] constexpr mat3x2<T> transpose() const {return {x.x,x.y,x.z,y.x,y.y,y.z};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 1, 0, 0};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, v.y, 0, 0};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz) {return mat2x2<T>::ortho2D(sz).to_mat2x3();}
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v) {return mat2x2<T>::scale(v).to_mat2x3();}
             [[nodiscard]] static constexpr vec rotate2D(T angle) {return mat2x2<T>::rotate2D(angle).to_mat2x3();}
-            [[nodiscard]] static constexpr vec scale2D(T s) {return mat2x2<T>::scale2D(s).to_mat2x3();}
             [[nodiscard]] constexpr mat2x2<T> to_mat2x2() const {return {x.x,y.x,x.y,y.y};}
             [[nodiscard]] constexpr mat2<T> to_mat2() const {return to_mat2x2();}
             [[nodiscard]] constexpr mat3x2<T> to_mat3x2() const {return {x.x,y.x,0,x.y,y.y,0};}
@@ -1112,31 +1105,29 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat3x3<TT> to() const {return {TT(x.x),TT(y.x),TT(z.x),TT(x.y),TT(y.y),TT(z.y),TT(x.z),TT(y.z),TT(z.z)};}
             [[nodiscard]] constexpr mat3x3<T> transpose() const {return {x.x,x.y,x.z,y.x,y.y,y.z,z.x,z.y,z.z};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 0, 1, 0, 0, 0, 1};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, 0, v.y, 0, 0, 0, 1};}
-            [[nodiscard]] static constexpr vec dia(const vec3<T> &v) {return {v.x, 0, 0, 0, v.y, 0, 0, 0, v.z};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz) {return mat2x2<T>::ortho2D(sz).to_mat3x3();}
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v) {return mat2x2<T>::scale(v).to_mat3x3();}
+            [[nodiscard]] static constexpr vec scale(const vec3<T> &v)
+            {
+                return {v.x, 0, 0,
+                        0, v.y, 0,
+                        0, 0, v.z};
+            }
             [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &min, const vec2<T> &max) {return mat3x2<T>::ortho2D(min, max).to_mat3x3();}
+            [[nodiscard]] static constexpr vec translate2D(const vec2<T> &v) {return mat3x2<T>::translate2D(v).to_mat3x3();}
             [[nodiscard]] static constexpr vec rotate2D(T angle) {return mat2x2<T>::rotate2D(angle).to_mat3x3();}
-            [[nodiscard]] static constexpr vec rotate_with_normalized_axis(const vec3<T> &in, T angle)
+            [[nodiscard]] static constexpr vec rotate_with_normalized_axis(const vec3<T> &axis, T angle)
             {
                 static_assert(is_floating_point, "This function only makes sense for floating-point matrices.");
                 T c = std::cos(angle);
                 T s = std::sin(angle);
-                return {in.x * in.x * (1 - c) + c, in.x * in.y * (1 - c) - in.z * s, in.x * in.z * (1 - c) + in.y * s,
-                        in.y * in.x * (1 - c) + in.z * s, in.y * in.y * (1 - c) + c, in.y * in.z * (1 - c) - in.x * s,
-                        in.x * in.z * (1 - c) - in.y * s, in.y * in.z * (1 - c) + in.x * s, in.z * in.z * (1 - c) + c};
+                return {axis.x * axis.x * (1 - c) + c, axis.x * axis.y * (1 - c) - axis.z * s, axis.x * axis.z * (1 - c) + axis.y * s,
+                        axis.y * axis.x * (1 - c) + axis.z * s, axis.y * axis.y * (1 - c) + c, axis.y * axis.z * (1 - c) - axis.x * s,
+                        axis.x * axis.z * (1 - c) - axis.y * s, axis.y * axis.z * (1 - c) + axis.x * s, axis.z * axis.z * (1 - c) + c};
             }
-            [[nodiscard]] static constexpr vec rotate(const vec3<T> &in, T angle)
+            [[nodiscard]] static constexpr vec rotate(const vec3<T> &axis, T angle)
             {
                 static_assert(is_floating_point, "This function only makes sense for floating-point matrices.");
-                return rotate_with_normalized_axis(in.norm(), angle);
-            }
-            [[nodiscard]] static constexpr vec scale2D(T s) {return mat2x2<T>::scale2D(s).to_mat3x3();}
-            [[nodiscard]] static constexpr vec scale(T s)
-            {
-                return {s, 0, 0,
-                        0, s, 0,
-                        0, 0, s};
+                return rotate_with_normalized_axis(axis.norm(), angle);
             }
             [[nodiscard]] constexpr mat2x2<T> to_mat2x2() const {return {x.x,y.x,x.y,y.y};}
             [[nodiscard]] constexpr mat2<T> to_mat2() const {return to_mat2x2();}
@@ -1255,17 +1246,9 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat4x3<TT> to() const {return {TT(x.x),TT(y.x),TT(z.x),TT(w.x),TT(x.y),TT(y.y),TT(z.y),TT(w.y),TT(x.z),TT(y.z),TT(z.z),TT(w.z)};}
             [[nodiscard]] constexpr mat3x4<T> transpose() const {return {x.x,x.y,x.z,y.x,y.y,y.z,z.x,z.y,z.z,w.x,w.y,w.z};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, 0, 0, v.y, 0, 0, 0, 0, 1, 0};}
-            [[nodiscard]] static constexpr vec dia(const vec3<T> &v) {return {v.x, 0, 0, 0, 0, v.y, 0, 0, 0, 0, v.z, 0};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz) {return mat2x2<T>::ortho2D(sz).to_mat4x3();}
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v) {return mat2x2<T>::scale(v).to_mat4x3();}
+            [[nodiscard]] static constexpr vec scale(const vec3<T> &v) {return mat3x3<T>::scale(v).to_mat4x3();}
             [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &min, const vec2<T> &max) {return mat3x2<T>::ortho2D(min, max).to_mat4x3();}
-            [[nodiscard]] static constexpr vec ortho(const vec2<T> &sz, T near, T far)
-            {
-                static_assert(is_floating_point, "This function only makes sense for floating-point matrices.");
-                return {2 / sz.x, 0, 0, 0,
-                        0, 2 / sz.y, 0, 0,
-                        0, 0, 2 / (near - far), (near + far) / (near - far)};
-            }
             [[nodiscard]] static constexpr vec ortho(const vec2<T> &min, const vec2<T> &max, T near, T far)
             {
                 static_assert(is_floating_point, "This function only makes sense for floating-point matrices.");
@@ -1283,17 +1266,16 @@ namespace Math
                         v2.x, v2.y, v2.z, -src.x*v2.x - src.y*v2.y - src.z*v2.z,
                         v3.x, v3.y, v3.z, -src.x*v3.x - src.y*v3.y - src.z*v3.z};
             }
-            [[nodiscard]] static constexpr vec translate(const vec3<T> &in)
+            [[nodiscard]] static constexpr vec translate2D(const vec2<T> &v) {return mat3x2<T>::translate2D(v).to_mat4x3();}
+            [[nodiscard]] static constexpr vec translate(const vec3<T> &v)
             {
-                return {1, 0, 0, in.x,
-                        0, 1, 0, in.y,
-                        0, 0, 1, in.z};
+                return {1, 0, 0, v.x,
+                        0, 1, 0, v.y,
+                        0, 0, 1, v.z};
             }
             [[nodiscard]] static constexpr vec rotate2D(T angle) {return mat2x2<T>::rotate2D(angle).to_mat4x3();}
-            [[nodiscard]] static constexpr vec rotate_with_normalized_axis(const vec3<T> &in, T angle) {return mat3x3<T>::rotate_with_normalized_axis(in, angle).to_mat4x3();}
-            [[nodiscard]] static constexpr vec rotate(const vec3<T> &in, T angle) {return mat3x3<T>::rotate(in, angle).to_mat4x3();}
-            [[nodiscard]] static constexpr vec scale2D(T s) {return mat2x2<T>::scale2D(s).to_mat4x3();}
-            [[nodiscard]] static constexpr vec scale(T s) {return mat3x3<T>::scale(s).to_mat4x3();}
+            [[nodiscard]] static constexpr vec rotate_with_normalized_axis(const vec3<T> &axis, T angle) {return mat3x3<T>::rotate_with_normalized_axis(axis, angle).to_mat4x3();}
+            [[nodiscard]] static constexpr vec rotate(const vec3<T> &axis, T angle) {return mat3x3<T>::rotate(axis, angle).to_mat4x3();}
             [[nodiscard]] constexpr mat2x2<T> to_mat2x2() const {return {x.x,y.x,x.y,y.y};}
             [[nodiscard]] constexpr mat2<T> to_mat2() const {return to_mat2x2();}
             [[nodiscard]] constexpr mat3x2<T> to_mat3x2() const {return {x.x,y.x,z.x,x.y,y.y,z.y};}
@@ -1383,10 +1365,8 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat2x4<TT> to() const {return {TT(x.x),TT(y.x),TT(x.y),TT(y.y),TT(x.z),TT(y.z),TT(x.w),TT(y.w)};}
             [[nodiscard]] constexpr mat4x2<T> transpose() const {return {x.x,x.y,x.z,x.w,y.x,y.y,y.z,y.w};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 1, 0, 0, 0, 0};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, v.y, 0, 0, 0, 0};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz) {return mat2x2<T>::ortho2D(sz).to_mat2x4();}
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v) {return mat2x2<T>::scale(v).to_mat2x4();}
             [[nodiscard]] static constexpr vec rotate2D(T angle) {return mat2x2<T>::rotate2D(angle).to_mat2x4();}
-            [[nodiscard]] static constexpr vec scale2D(T s) {return mat2x2<T>::scale2D(s).to_mat2x4();}
             [[nodiscard]] constexpr mat2x2<T> to_mat2x2() const {return {x.x,y.x,x.y,y.y};}
             [[nodiscard]] constexpr mat2<T> to_mat2() const {return to_mat2x2();}
             [[nodiscard]] constexpr mat3x2<T> to_mat3x2() const {return {x.x,y.x,0,x.y,y.y,0};}
@@ -1472,15 +1452,13 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat3x4<TT> to() const {return {TT(x.x),TT(y.x),TT(z.x),TT(x.y),TT(y.y),TT(z.y),TT(x.z),TT(y.z),TT(z.z),TT(x.w),TT(y.w),TT(z.w)};}
             [[nodiscard]] constexpr mat4x3<T> transpose() const {return {x.x,x.y,x.z,x.w,y.x,y.y,y.z,y.w,z.x,z.y,z.z,z.w};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, 0, v.y, 0, 0, 0, 1, 0, 0, 0};}
-            [[nodiscard]] static constexpr vec dia(const vec3<T> &v) {return {v.x, 0, 0, 0, v.y, 0, 0, 0, v.z, 0, 0, 0};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz) {return mat2x2<T>::ortho2D(sz).to_mat3x4();}
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v) {return mat2x2<T>::scale(v).to_mat3x4();}
+            [[nodiscard]] static constexpr vec scale(const vec3<T> &v) {return mat3x3<T>::scale(v).to_mat3x4();}
             [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &min, const vec2<T> &max) {return mat3x2<T>::ortho2D(min, max).to_mat3x4();}
+            [[nodiscard]] static constexpr vec translate2D(const vec2<T> &v) {return mat3x2<T>::translate2D(v).to_mat3x4();}
             [[nodiscard]] static constexpr vec rotate2D(T angle) {return mat2x2<T>::rotate2D(angle).to_mat3x4();}
-            [[nodiscard]] static constexpr vec rotate_with_normalized_axis(const vec3<T> &in, T angle) {return mat3x3<T>::rotate_with_normalized_axis(in, angle).to_mat3x4();}
-            [[nodiscard]] static constexpr vec rotate(const vec3<T> &in, T angle) {return mat3x3<T>::rotate(in, angle).to_mat3x4();}
-            [[nodiscard]] static constexpr vec scale2D(T s) {return mat2x2<T>::scale2D(s).to_mat3x4();}
-            [[nodiscard]] static constexpr vec scale(T s) {return mat3x3<T>::scale(s).to_mat3x4();}
+            [[nodiscard]] static constexpr vec rotate_with_normalized_axis(const vec3<T> &axis, T angle) {return mat3x3<T>::rotate_with_normalized_axis(axis, angle).to_mat3x4();}
+            [[nodiscard]] static constexpr vec rotate(const vec3<T> &axis, T angle) {return mat3x3<T>::rotate(axis, angle).to_mat3x4();}
             [[nodiscard]] constexpr mat2x2<T> to_mat2x2() const {return {x.x,y.x,x.y,y.y};}
             [[nodiscard]] constexpr mat2<T> to_mat2() const {return to_mat2x2();}
             [[nodiscard]] constexpr mat3x2<T> to_mat3x2() const {return {x.x,y.x,z.x,x.y,y.y,z.y};}
@@ -1578,18 +1556,23 @@ namespace Math
             template <typename TT> [[nodiscard]] constexpr mat4x4<TT> to() const {return {TT(x.x),TT(y.x),TT(z.x),TT(w.x),TT(x.y),TT(y.y),TT(z.y),TT(w.y),TT(x.z),TT(y.z),TT(z.z),TT(w.z),TT(x.w),TT(y.w),TT(z.w),TT(w.w)};}
             [[nodiscard]] constexpr mat4x4<T> transpose() const {return {x.x,x.y,x.z,x.w,y.x,y.y,y.z,y.w,z.x,z.y,z.z,z.w,w.x,w.y,w.z,w.w};}
             [[nodiscard]] static constexpr vec identity() {return {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};}
-            [[nodiscard]] static constexpr vec dia(const vec2<T> &v) {return {v.x, 0, 0, 0, 0, v.y, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};}
-            [[nodiscard]] static constexpr vec dia(const vec3<T> &v) {return {v.x, 0, 0, 0, 0, v.y, 0, 0, 0, 0, v.z, 0, 0, 0, 0, 1};}
-            [[nodiscard]] static constexpr vec dia(const vec4<T> &v) {return {v.x, 0, 0, 0, 0, v.y, 0, 0, 0, 0, v.z, 0, 0, 0, 0, v.w};}
-            [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &sz) {return mat2x2<T>::ortho2D(sz).to_mat4x4();}
+            [[nodiscard]] static constexpr vec scale(const vec2<T> &v) {return mat2x2<T>::scale(v).to_mat4x4();}
+            [[nodiscard]] static constexpr vec scale(const vec3<T> &v) {return mat3x3<T>::scale(v).to_mat4x4();}
+            [[nodiscard]] static constexpr vec scale(const vec4<T> &v)
+            {
+                return {v.x, 0, 0, 0,
+                        0, v.y, 0, 0,
+                        0, 0, v.z, 0,
+                        0, 0, 0, v.w};
+            }
             [[nodiscard]] static constexpr vec ortho2D(const vec2<T> &min, const vec2<T> &max) {return mat3x2<T>::ortho2D(min, max).to_mat4x4();}
-            [[nodiscard]] static constexpr vec ortho(const vec2<T> &sz, T near, T far) {return mat4x3<T>::ortho(sz, near, far).to_mat4x4();}
             [[nodiscard]] static constexpr vec ortho(const vec2<T> &min, const vec2<T> &max, T near, T far) {return mat4x3<T>::ortho(min, max, near, far).to_mat4x4();}
             [[nodiscard]] static constexpr vec look_at(const vec3<T> &src, const vec3<T> &dst, const vec3<T> &local_up) {return mat4x3<T>::look_at(src, dst, local_up).to_mat4x4();}
-            [[nodiscard]] static constexpr vec translate(const vec3<T> &in) {return mat4x3<T>::translate(in).to_mat4x4();}
+            [[nodiscard]] static constexpr vec translate2D(const vec2<T> &v) {return mat3x2<T>::translate2D(v).to_mat4x4();}
+            [[nodiscard]] static constexpr vec translate(const vec3<T> &v) {return mat4x3<T>::translate(v).to_mat4x4();}
             [[nodiscard]] static constexpr vec rotate2D(T angle) {return mat2x2<T>::rotate2D(angle).to_mat4x4();}
-            [[nodiscard]] static constexpr vec rotate_with_normalized_axis(const vec3<T> &in, T angle) {return mat3x3<T>::rotate_with_normalized_axis(in, angle).to_mat4x4();}
-            [[nodiscard]] static constexpr vec rotate(const vec3<T> &in, T angle) {return mat3x3<T>::rotate(in, angle).to_mat4x4();}
+            [[nodiscard]] static constexpr vec rotate_with_normalized_axis(const vec3<T> &axis, T angle) {return mat3x3<T>::rotate_with_normalized_axis(axis, angle).to_mat4x4();}
+            [[nodiscard]] static constexpr vec rotate(const vec3<T> &axis, T angle) {return mat3x3<T>::rotate(axis, angle).to_mat4x4();}
             [[nodiscard]] static constexpr vec perspective(T yfov, T wh_aspect, T near, T far)
             {
                 static_assert(is_floating_point, "This function only makes sense for floating-point matrices.");
@@ -1598,15 +1581,6 @@ namespace Math
                         0                , yfov , 0                           , 0                             ,
                         0                , 0    , (near + far) / (near - far) , 2 * near * far / (near - far) ,
                         0                , 0    , -1                          , 0                             };
-            }
-            [[nodiscard]] static constexpr vec scale2D(T s) {return mat2x2<T>::scale2D(s).to_mat4x4();}
-            [[nodiscard]] static constexpr vec scale(T s) {return mat3x3<T>::scale(s).to_mat4x4();}
-            [[nodiscard]] static constexpr vec scale4D(T s)
-            {
-                return {s, 0, 0, 0,
-                        0, s, 0, 0,
-                        0, 0, s, 0,
-                        0, 0, 0, s};
             }
             [[nodiscard]] constexpr mat2x2<T> to_mat2x2() const {return {x.x,y.x,x.y,y.y};}
             [[nodiscard]] constexpr mat2<T> to_mat2() const {return to_mat2x2();}
