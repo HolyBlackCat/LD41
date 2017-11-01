@@ -180,7 +180,7 @@ namespace Graphics
         {
             FromMemory(size, ptr);
         }
-        Image(std::string fname, bool flip_y = 1)
+        Image(std::string fname, bool flip_y = 0)
         {
             FromFile(fname, flip_y);
         }
@@ -205,7 +205,7 @@ namespace Graphics
             if (ptr)
                 std::copy(ptr, ptr + size.product() * sizeof(u8vec4), (char *)data.data());
         }
-        void FromFile(std::string fname, bool flip_y = 1)
+        void FromFile(std::string fname, bool flip_y = 0)
         {
             stbi_set_flip_vertically_on_load(flip_y); // This just sets an internal flag, shouldn't be slow.
             ivec2 size;
@@ -256,6 +256,8 @@ namespace Graphics
         Handle handle;
         int slot = SlotAllocator::not_allocated;
 
+        ivec2 size{};
+
       public:
         static void SetActiveSlot(int slot) // You don't usually need to call this manually.
         {
@@ -285,10 +287,10 @@ namespace Graphics
         Texture(Texture &&) = default;
         Texture &operator=(Texture &&) = default;
 
-        Texture(InterpMode mode, ivec2 size, const u8vec4 *data = 0) // Creates and attaches the texture.
+        Texture(InterpMode mode, ivec2 img_size, const u8vec4 *data = 0) // Creates and attaches the texture.
         {
             Create();
-            SetData(size, data);
+            SetData(img_size, data);
             Interpolation(mode);
         }
         Texture(const Image &img, InterpMode mode) // Creates and attaches the texture.
@@ -337,9 +339,10 @@ namespace Graphics
             return slot;
         }
 
-        void SetData(ivec2 size, const u8vec4 *data = 0) // Attaches the texture.
+        void SetData(ivec2 img_size, const u8vec4 *data = 0) // Attaches the texture.
         {
             Attach();
+            size = img_size;
             glTexImage2D(GL_TEXTURE_2D, 0, OnPC(GL_RGBA8) OnMobile(GL_RGBA), size.x, size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
         }
         void SetData(const Image &img) // Attaches the texture.
@@ -388,6 +391,11 @@ namespace Graphics
         {
             WrapX(mode);
             WrapY(mode);
+        }
+
+        ivec2 Size() const
+        {
+            return size;
         }
 
         static void SetMaxTextureCount(int count) // If you have any attached textures when calling this, it does nothing.
