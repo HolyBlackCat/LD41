@@ -206,6 +206,11 @@ namespace Renderers
             }
             ref center()
             {
+                pixel_center(floor(m_size / 2));
+                return (ref)*this;
+            }
+            ref center_f()
+            {
                 pixel_center(m_size / 2);
                 return (ref)*this;
             }
