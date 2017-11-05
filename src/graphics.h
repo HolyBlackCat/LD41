@@ -2,6 +2,9 @@
 #define GRAPHICS_H_INCLUDED
 
 #include <algorithm>
+#include <bitset>
+#include <fstream>
+#include <ios>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -10,6 +13,7 @@
 #include <GLFL/glfl.h>
 #include <stb_image.h>
 #include <stb_image_write.h>
+#include <stb_truetype.h>
 
 #include "exceptions.h"
 #include "platform.h"
@@ -42,16 +46,37 @@ namespace Graphics
     inline namespace Exceptions
     {
         DefineExceptionBase(exception)
+
         DefineExceptionInline(cant_create_gl_resource, :exception, "Can't create an OpenGL resource.",
             (std::string,type,"Type")
         )
         DefineExceptionInline(gl_error, :exception, "OpenGL error.",
             (std::string,message,"Message")
         )
-        DefineExceptionInline(cant_load_image, :exception, "Can't load an image.",
-            (std::string,name,"Name")
-        )
         DefineExceptionInline(no_free_texture_slots, :exception, "Out of free texture slots.",)
+
+        DefineExceptionBase(font_atlas_error, :exception)
+        //{
+            DefineExceptionInline(cant_init_font_atlas, :font_atlas_error, "Can't initialize a font atlas.",
+                (std::string,message,"Message")
+                (ivec2,pos,"Position")
+                (ivec2,size,"Size")
+            )
+            DefineExceptionInline(not_enough_texture_atlas_space, :font_atlas_error, "Out of space for a font atlas.",
+                (ivec2,pos,"Position")
+                (ivec2,size,"Size")
+            )
+        //}
+
+        DefineExceptionBase(cant_load_asset, :exception)
+        //{
+            DefineExceptionInline(cant_load_image, :cant_load_asset, "Can't load image.",
+                (std::string,name,"Name")
+            )
+            DefineExceptionInline(cant_load_font, :cant_load_asset, "Can't load font.",
+                (std::string,name,"Name")
+            )
+        //}
 
         DefineExceptionBase(shader_exception, :exception)
         //{
@@ -168,6 +193,108 @@ namespace Graphics
         }
     }
 
+    class TruetypeFont
+    {
+        std::vector<char> data;
+      public:
+        TruetypeFont() {}
+        TruetypeFont(const TruetypeFont &) = delete;
+        TruetypeFont &operator=(const TruetypeFont &) = delete;
+        TruetypeFont(TruetypeFont &&) = default;
+        TruetypeFont &operator=(TruetypeFont &&) = default;
+
+        TruetypeFont(std::string fname)
+        {
+            Create(fname);
+        }
+        void Create(std::string fname)
+        {
+            std::ifstream input(fname, input.in | input.binary);
+            if (!input)
+                throw cant_load_font(fname);
+            input >> std::noskipws;
+            input.seekg(0, input.end);
+            auto size = input.tellg();
+            input.seekg(0, input.beg);
+            if (size == decltype(size)(-1))
+                throw cant_load_font(fname);
+            data.resize(size);
+            input.read(data.data(), size);
+            if (!input)
+                throw cant_load_font(fname);
+        }
+        void Destroy()
+        {
+            data = {};
+        }
+        const void *Data() const
+        {
+            return data.data();
+        }
+    };
+
+    class Font
+    {
+      public:
+        struct Glyph
+        {
+            ivec2 tex_pos = {0,0}, size = {0,0}, offset = {0,0};
+            int advance = 0;
+        };
+      private:
+        static constexpr int pack_size = 256;
+        static_assert(0x10000 % pack_size == 0);
+
+        struct GlyphPack
+        {
+            std::bitset<pack_size> available; // Filled with zeroes by default.
+            std::vector<Glyph> glyphs;
+        };
+
+        int height = 0, ascent = 0, line_skip = 0;
+        bool enable_line_gap = 1;
+        std::vector<GlyphPack> data{0x10000 / pack_size};
+      public:
+        Font() {Set(0xffff, {});}
+        void Set(uint16_t index, const Glyph &glyph)
+        {
+            auto &sub_vec = data[index / pack_size];
+            sub_vec.available[index % pack_size] = 1;
+            if (sub_vec.glyphs.empty())
+                sub_vec.glyphs.resize(pack_size);
+            sub_vec.glyphs[index % pack_size] = glyph;
+        }
+        bool Available(uint16_t index) const
+        {
+            return data[index / pack_size].available[index % pack_size];
+        }
+        const Glyph &Get(uint16_t index) const // If no glyph with such index is found, returns 0xffff'th glyph.
+        {
+            if (!Available(index))
+                return GetDefault();
+            return data[index / pack_size].glyphs[index % pack_size];
+        }
+        const Glyph &GetDefault() const // Returns 0xffff'th glyph.
+        {
+            return Get(0xffff);
+        }
+
+        void SetMetrics(int new_height, int new_ascent, int new_line_skip)
+        {
+            height = new_height;
+            ascent = new_ascent;
+            line_skip = new_line_skip;
+        }
+        void EnableLineGap(bool new_enable_line_gap) // If enabled (default), LineSkip() returns height instead.
+        {
+            enable_line_gap = new_enable_line_gap;
+        }
+        int Height() const {return height;}
+        int Ascent() const {return ascent;}
+        int Descent() const {return height-ascent;}
+        int LineSkip() const {return enable_line_gap ? line_skip : height;}
+    };
+
     class Image
     {
         std::vector<u8vec4> data;
@@ -186,16 +313,34 @@ namespace Graphics
         }
         ivec2 Size() const {return {width, int(data.size()) / width};}
         const u8vec4 *Data() const {return data.data();}
-        u8vec4 Get(ivec2 pos) const
-        {
-            pos = clamp(pos, 0, Size());
-            return data[pos.x + pos.y * width];
-        }
-        void Set(ivec2 pos, u8vec4 v)
+        u8vec4 At(ivec2 pos) const
         {
             if ((pos < 0).any() || (pos >= Size()).any())
-                return;
-            data[pos.x + pos.y * width] = v;
+                return {0,0,0,0};
+            return data[pos.x + pos.y * width];
+        }
+        u8vec4 &At(ivec2 pos)
+        {
+            if ((pos < 0).any() || (pos >= Size()).any())
+            {
+                static u8vec4 ret;
+                ret = {0,0,0,0};
+                return ret;
+            }
+            return data[pos.x + pos.y * width];
+        }
+        void Fill(ivec2 pos, ivec2 size, u8vec4 color)
+        {
+            pos = clamp(pos, 0, Size() - 1);
+            size = min(pos + size, Size());
+            for (int y = pos.y; y < size.y; y++)
+            for (int x = pos.y; x < size.x; x++)
+                data[x + y * width] = color;
+        }
+        void Fill(u8vec4 color)
+        {
+            for (auto &it : data)
+                it = color;
         }
 
         void FromMemory(ivec2 size, const char *ptr = 0)
@@ -224,6 +369,10 @@ namespace Graphics
             data = {};
             width = 0;
         }
+        bool Exists() const
+        {
+            return data.size() != 0;
+        }
 
         void SaveToFile(Format format, std::string fname)
         {
@@ -235,6 +384,72 @@ namespace Graphics
               case tga:
                 stbi_write_tga(fname.c_str(), Size().x, Size().y, 4, data.data());
                 return;
+            }
+        }
+
+        struct AtlasFont
+        {
+            const TruetypeFont &ttfont;
+            Font &font;
+            int size; // If non-negative, represents full height measured in pixels. Otherwise represents 'point size' (supposedly height of letter 'M' in pixels).
+            int index;
+            Utils::Range<const int, Utils::contiguous> range; // Chars must fit in [0,0xffff], otherwise bad stuff will happen.
+
+            AtlasFont(const TruetypeFont &ttfont, Font &font, int size, int index, decltype(range) range)
+                : ttfont(ttfont), font(font), size(size), index(index), range(range) {}
+        };
+
+        void CreateFontAtlas(ivec2 pos, ivec2 size, Utils::Range<const AtlasFont> fonts, int alpha_threshold = -1) // Set `alpha_threshold` to -1 to do antialiasing. Otherwise any alpha smaller than this becomes 0, and 255 otherwise.
+        {
+            if ((pos < 0).any() || (pos + size >= Size()).any())
+                throw cant_init_font_atlas("Specified region doesn't fit into the image.", pos, size);
+
+            std::vector<unsigned char> bitmap(size.product());
+
+            stbtt_pack_context pack_con;
+            if (!stbtt_PackBegin(&pack_con, bitmap.data(), size.x, size.y, size.x * sizeof(char), 1, nullptr))
+                throw cant_init_font_atlas("Unable to init packer.", pos, size);
+
+            for (const auto &it : fonts)
+            {
+                std::size_t char_count = it.range.size();
+                const int *char_ptr = &*it.range.begin();
+
+                stbtt_pack_range range{};
+                range.font_size = it.size;
+                range.array_of_unicode_codepoints = const_cast<int *>(char_ptr); // No idea why the stbtt doesn't use a const pointer.
+                range.num_chars = char_count;
+
+                std::vector<stbtt_packedchar> results(char_count);
+                range.chardata_for_range = results.data();
+
+                if (!stbtt_PackFontRanges(&pack_con, (unsigned char *)it.ttfont.Data(), it.index, &range, 1))
+                {
+                    stbtt_PackEnd(&pack_con);
+                    throw not_enough_texture_atlas_space(pos, size);
+                }
+
+                for (std::size_t i = 0; i < char_count; i++)
+                {
+                    const auto &ref = results[i];
+                    Font::Glyph glyph;
+                    glyph.tex_pos = ivec2(ref.x0, ref.y0) + pos;
+                    glyph.size = decltype(glyph.size)(ref.x1 - ref.x0, ref.y1 - ref.y0);
+                    glyph.offset = iround(fvec2(ref.xoff, ref.yoff));
+                    glyph.advance = iround(ref.xadvance);
+                    it.font.Set(char_ptr[i], glyph);
+                }
+            }
+
+            stbtt_PackEnd(&pack_con);
+
+            for (int y = 0; y < size.y; y++)
+            for (int x = 0; x < size.x; x++)
+            {
+                if (alpha_threshold == -1)
+                    data[pos.x + x + (pos.y + y) * width] = u8vec4(255, 255, 255, bitmap[x + y * size.x]);
+                else
+                    data[pos.x + x + (pos.y + y) * width] = u8vec4(255, 255, 255, (bitmap[x + y * size.x] < alpha_threshold ? 0 : 255));
             }
         }
     };
@@ -309,6 +524,10 @@ namespace Graphics
             Detach();
             handle.destroy();
         }
+        bool Exists() const
+        {
+            return bool(handle);
+        }
 
         void Attach() // The texture must be created first. Consecutive calls just activate a slot to which the texture was attached.
         {
@@ -332,6 +551,10 @@ namespace Graphics
             glBindTexture(GL_TEXTURE_2D, 0);
             slot_allocator.free(slot);
             slot = SlotAllocator::not_allocated;
+        }
+        bool Attached() const
+        {
+            return slot != SlotAllocator::not_allocated;
         }
 
         int Slot() const
@@ -518,9 +741,9 @@ namespace Graphics
                 buffer.destroy();
             }
         }
-        explicit operator bool() const
+        bool Exists() const
         {
-            return *buffer;
+            return *buffer != 0;
         }
 
         int Size() const {return size;}
@@ -653,7 +876,7 @@ namespace Graphics
 
         void Flush()
         {
-            DebugAssert("Attempt to flush a null render queue.", buffer);
+            DebugAssert("Attempt to flush a null render queue.", buffer.Exists());
             buffer.SetDataPart(0, pos, data.data());
             buffer.Draw(P, pos);
             pos = 0;
@@ -801,7 +1024,7 @@ namespace Graphics
             int location;
             std::string name;
         };
-        void CreateRaw(const std::string &v_src, const std::string &f_src, const std::vector<Attribute> &attributes = {})
+        void CreateRaw(const std::string &v_src, const std::string &f_src, Utils::Range<const Attribute> attributes = {})
         {
             Program p(nullptr);
             SeparateShader v(ShaderType::vertex), f(ShaderType::fragment);
@@ -933,6 +1156,11 @@ namespace Graphics
             vertex.destroy();
             fragment.destroy();
         }
+        bool Exists() const
+        {
+            return program.handle() != 0;
+        }
+
         void Bind() const
         {
             DebugAssert("Attempt to bind a null shader.", program.handle());
