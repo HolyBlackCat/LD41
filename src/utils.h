@@ -1,8 +1,11 @@
 #ifndef UTILS_H_INCLUDED
 #define UTILS_H_INCLUDED
 
-#include <new>
+#include <any>
+#include <cstddef>
+#include <iterator>
 #include <memory>
+#include <new>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -289,6 +292,141 @@ namespace Utils
         ResIterator end_free() const
         {
             return end_all();
+        }
+    };
+
+
+    namespace impl
+    {
+        template <typename T, typename = void> struct has_contiguous_storage : std::false_type {};
+        template <typename T> struct has_contiguous_storage<T, std::void_t<decltype(std::data(std::declval<const T &>()))>> : std::true_type {};
+
+        template <typename T, typename = void> struct has_std_size : std::false_type {};
+        template <typename T> struct has_std_size<T, std::void_t<decltype(std::size(std::declval<const T &>()))>> : std::true_type {};
+    }
+
+    enum Storage {any, contiguous};
+
+    template <typename T, Storage S = any> class Range
+    {
+        struct FuncTable
+        {
+            void (*copy)(const std::any &from, std::any &to);
+            bool (*equal)(const std::any &a, const std::any &b);
+            void (*increment)(std::any &iter);
+            std::size_t (*distance)(const std::any &a, const std::any &b);
+            T &(*dereference)(const std::any &iter);
+        };
+
+        class Iterator
+        {
+            std::any data;
+            const FuncTable *table;
+          public:
+            template <typename Iter> Iterator(const Iter &source)
+            {
+                static FuncTable table_storage
+                {
+                    [](const std::any &from, std::any &to) // copy
+                    {
+                        to.emplace<Iter>(std::any_cast<const Iter &>(from));
+                    },
+                    [](const std::any &a, const std::any &b) -> bool // equal
+                    {
+                        return std::any_cast<const Iter &>(a) == std::any_cast<const Iter &>(b);
+                    },
+                    [](std::any &iter) // increment
+                    {
+                        ++std::any_cast<Iter &>(iter);
+                    },
+                    [](const std::any &a, const std::any &b) -> std::size_t // distance
+                    {
+                        return std::distance(std::any_cast<const Iter &>(a), std::any_cast<const Iter &>(b));
+                    },
+                    [](const std::any &iter) -> T & // dereference
+                    {
+                        return *std::any_cast<const Iter &>(iter);
+                    },
+                };
+
+                data.emplace<Iter>(source);
+                table = &table_storage;
+            }
+
+            Iterator(const Iterator &other)
+            {
+                table = other.table;
+                table->copy(other.data, data);
+            }
+            Iterator &operator=(const Iterator &other)
+            {
+                if (&other == this)
+                    return *this;
+                table = other.table;
+                table->copy(other.data, data);
+                return *this;
+            }
+
+            T &operator*() const
+            {
+                return table->dereference(data);
+            }
+            bool operator==(const Iterator &other) const
+            {
+                return table->equal(data, other.data);
+            }
+            bool operator!=(const Iterator &other) const
+            {
+                return !(*this == other);
+            }
+            Iterator &operator++()
+            {
+                table->increment(data);
+                return *this;
+            }
+            Iterator operator++(int)
+            {
+                Iterator ret = *this;
+                ++*this;
+                return ret;
+            }
+            std::size_t operator-(const Iterator &other) const
+            {
+                return table->distance(other.data, data);
+            }
+        };
+
+        Iterator begin_iter, end_iter;
+        mutable std::size_t len = -1;
+      public:
+        inline static constexpr bool is_const = std::is_const_v<T>;
+
+        Range() : Range((T *)0, (T *)0) {}
+        template <typename Object, typename = std::enable_if_t<!std::is_same_v<Object, Range>>>
+        Range(const Object &obj) : Range(std::begin(obj), std::end(obj))
+        {
+            static_assert(S != contiguous || impl::has_contiguous_storage<Object>::value, "The object must have a contiguous storage.");
+            if constexpr (impl::has_std_size<Object>::value)
+                len = std::size(obj);
+        }
+        Range(std::initializer_list<T> list) : Range(&*list.begin(), &*list.end()) {}
+        template <typename Iter> Range(const Iter &begin, const Iter &end) : begin_iter(begin), end_iter(end)
+        {
+            static_assert(S != contiguous || std::is_pointer_v<Iter>, "For contiguous storage iterators have to be pointers.");
+        }
+        Iterator begin() const
+        {
+            return begin_iter;
+        }
+        Iterator end() const
+        {
+            return end_iter;
+        }
+        std::size_t size() const
+        {
+            if (len == std::size_t(-1))
+                len = end_iter - begin_iter;
+            return len;
         }
     };
 }
