@@ -3,9 +3,11 @@
 
 #include <any>
 #include <cstddef>
+#include <fstream>
 #include <iterator>
 #include <memory>
 #include <new>
+#include <string>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -429,7 +431,55 @@ namespace Utils
             return len;
         }
     };
-}
 
+
+    DefineExceptionInline(cant_read_file, "Unable to read from file.",
+        (std::string,name,"File name")
+    )
+
+    class MemoryFile
+    {
+        std::vector<char> data;
+      public:
+        MemoryFile() {}
+        MemoryFile(const MemoryFile &) = delete;
+        MemoryFile &operator=(const MemoryFile &) = delete;
+        MemoryFile(MemoryFile &&) = default;
+        MemoryFile &operator=(MemoryFile &&) = default;
+
+        MemoryFile(std::string fname)
+        {
+            Create(fname);
+        }
+        void Create(std::string fname)
+        {
+            std::ifstream input(fname, input.in | input.binary);
+            if (!input)
+                throw cant_read_file(fname);
+            input >> std::noskipws;
+            input.seekg(0, input.end);
+            auto size = input.tellg();
+            input.seekg(0, input.beg);
+            if (size == decltype(size)(-1))
+                throw cant_read_file(fname);
+            data.resize(size);
+            input.read(data.data(), size);
+            if (!input)
+                throw cant_read_file(fname);
+        }
+        void Destroy()
+        {
+            data = {};
+        }
+        const void *Data() const
+        {
+            return data.data();
+        }
+        std::size_t Size() const
+        {
+            return data.size();
+        }
+    };
+}
 
 #endif

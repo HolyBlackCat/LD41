@@ -70,6 +70,8 @@
 			<Add library="shell32" />
 			<Add library="version" />
 			<Add library="uuid" />
+			<Add library="freetype" />
+			<Add library="z" />
 			<Add directory="libs" />
 		</Linker>
 		<Unit filename="libs/glfl.cpp" />

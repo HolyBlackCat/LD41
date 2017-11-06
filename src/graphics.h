@@ -3,7 +3,7 @@
 
 #include <algorithm>
 #include <bitset>
-#include <fstream>
+#include <cstddef>
 #include <ios>
 #include <string>
 #include <type_traits>
@@ -13,7 +13,8 @@
 #include <GLFL/glfl.h>
 #include <stb_image.h>
 #include <stb_image_write.h>
-#include <stb_truetype.h>
+#include <ft2build.h>
+#include FT_FREETYPE_H // Ugh.
 
 #include "exceptions.h"
 #include "platform.h"
@@ -55,41 +56,38 @@ namespace Graphics
         )
         DefineExceptionInline(no_free_texture_slots, :exception, "Out of free texture slots.",)
 
-        DefineExceptionBase(font_atlas_error, :exception)
-        //{
-            DefineExceptionInline(cant_init_font_atlas, :font_atlas_error, "Can't initialize a font atlas.",
-                (std::string,message,"Message")
-                (ivec2,pos,"Position")
-                (ivec2,size,"Size")
-            )
-            DefineExceptionInline(not_enough_texture_atlas_space, :font_atlas_error, "Out of space for a font atlas.",
-                (ivec2,pos,"Position")
-                (ivec2,size,"Size")
-            )
-        //}
+        DefineExceptionInline(cant_init_freetype, :exception, "Can't initialize Freetype.",)
 
-        DefineExceptionBase(cant_load_asset, :exception)
-        //{
-            DefineExceptionInline(cant_load_image, :cant_load_asset, "Can't load image.",
-                (std::string,name,"Name")
-            )
-            DefineExceptionInline(cant_load_font, :cant_load_asset, "Can't load font.",
-                (std::string,name,"Name")
-            )
-        //}
+        DefineExceptionInline(cant_parse_font, :exception, "Unable to parse a font.",
+            (std::string,name,"Name")
+        )
+        DefineExceptionInline(bad_font_size, :exception, "Invalid font size.",
+            (ivec2,size,"Specified size")
+            (std::string,available,"Available sizes")
+        )
+        DefineExceptionInline(cant_render_glyph, :exception, "Unable to render a glyph.",
+            (unsigned int,code,"Code")
+            (std::string,reason,"Reason")
+        )
 
-        DefineExceptionBase(shader_exception, :exception)
-        //{
-            DefineExceptionInline(shader_compilation_error, :shader_exception, "Shader compilation error.",
-                (std::string,vertex_status,"Vertex status")
-                (std::string,fragment_status,"Fragment status")
-                (std::string,vertex_log,"Vertex log")
-                (std::string,fragment_log,"Fragment log")
-            )
-            DefineExceptionInline(shader_linking_error, :shader_exception, "Shader linking error.",
-                (std::string,fragment_log,"Log")
-            )
-        //}
+        DefineExceptionInline(not_enough_texture_atlas_space, :exception, "Out of space for a font atlas.",
+            (ivec2,pos,"Position")
+            (ivec2,size,"Size")
+        )
+
+        DefineExceptionInline(cant_load_image, :exception, "Can't load image.",
+            (std::string,name,"Name")
+        )
+
+        DefineExceptionInline(shader_compilation_error, :exception, "Shader compilation error.",
+            (std::string,vertex_status,"Vertex status")
+            (std::string,fragment_status,"Fragment status")
+            (std::string,vertex_log,"Vertex log")
+            (std::string,fragment_log,"Fragment log")
+        )
+        DefineExceptionInline(shader_linking_error, :exception, "Shader linking error.",
+            (std::string,fragment_log,"Log")
+        )
     }
 
     inline void CheckErrors()
@@ -193,50 +191,10 @@ namespace Graphics
         }
     }
 
-    class TruetypeFont
-    {
-        std::vector<char> data;
-      public:
-        TruetypeFont() {}
-        TruetypeFont(const TruetypeFont &) = delete;
-        TruetypeFont &operator=(const TruetypeFont &) = delete;
-        TruetypeFont(TruetypeFont &&) = default;
-        TruetypeFont &operator=(TruetypeFont &&) = default;
-
-        TruetypeFont(std::string fname)
-        {
-            Create(fname);
-        }
-        void Create(std::string fname)
-        {
-            std::ifstream input(fname, input.in | input.binary);
-            if (!input)
-                throw cant_load_font(fname);
-            input >> std::noskipws;
-            input.seekg(0, input.end);
-            auto size = input.tellg();
-            input.seekg(0, input.beg);
-            if (size == decltype(size)(-1))
-                throw cant_load_font(fname);
-            data.resize(size);
-            input.read(data.data(), size);
-            if (!input)
-                throw cant_load_font(fname);
-        }
-        void Destroy()
-        {
-            data = {};
-        }
-        const void *Data() const
-        {
-            return data.data();
-        }
-    };
-
-    class Font
+    class CharMap
     {
       public:
-        struct Glyph
+        struct Char
         {
             ivec2 tex_pos = {0,0}, size = {0,0}, offset = {0,0};
             int advance = 0;
@@ -245,18 +203,18 @@ namespace Graphics
         static constexpr int pack_size = 256;
         static_assert(0x10000 % pack_size == 0);
 
-        struct GlyphPack
+        struct CharPack
         {
             std::bitset<pack_size> available; // Filled with zeroes by default.
-            std::vector<Glyph> glyphs;
+            std::vector<Char> glyphs;
         };
 
         int height = 0, ascent = 0, line_skip = 0;
         bool enable_line_gap = 1;
-        std::vector<GlyphPack> data{0x10000 / pack_size};
+        std::vector<CharPack> data{0x10000 / pack_size};
       public:
-        Font() {Set(0xffff, {});}
-        void Set(uint16_t index, const Glyph &glyph)
+        CharMap() {Set(0xffff, {});}
+        void Set(uint16_t index, const Char &glyph)
         {
             auto &sub_vec = data[index / pack_size];
             sub_vec.available[index % pack_size] = 1;
@@ -268,13 +226,13 @@ namespace Graphics
         {
             return data[index / pack_size].available[index % pack_size];
         }
-        const Glyph &Get(uint16_t index) const // If no glyph with such index is found, returns 0xffff'th glyph.
+        const Char &Get(uint16_t index) const // If no glyph with such index is found, returns 0xffff'th glyph.
         {
             if (!Available(index))
                 return GetDefault();
             return data[index / pack_size].glyphs[index % pack_size];
         }
-        const Glyph &GetDefault() const // Returns 0xffff'th glyph.
+        const Char &GetDefault() const // Returns 0xffff'th glyph.
         {
             return Get(0xffff);
         }
@@ -293,6 +251,155 @@ namespace Graphics
         int Ascent() const {return ascent;}
         int Descent() const {return height-ascent;}
         int LineSkip() const {return enable_line_gap ? line_skip : height;}
+    };
+
+    class Font
+    {
+        struct FreetypeFontFuncs
+        {
+            template <typename> friend class ::Utils::Handle;
+            static FT_Face Create(const std::string &/*display_name*/, const void *data, std::size_t data_size, int font_index)
+            {
+                static FT_Library lib = 0;
+                if (!lib)
+                {
+                    if (FT_Init_FreeType(&lib))
+                        throw cant_init_freetype();
+                }
+
+                FT_Open_Args args{};
+                args.flags = FT_OPEN_MEMORY;
+                args.memory_base = (decltype(args.memory_base))data;
+                args.memory_size = data_size;
+
+                FT_Face ret;
+                if (FT_Open_Face(lib, &args, font_index, &ret))
+                    return 0;
+
+                return ret;
+            }
+            static void Destroy(FT_Face value)
+            {
+                FT_Done_Face(value);
+            }
+            static void Error(const std::string &display_name, const void *, std::size_t, int)
+            {
+                throw cant_parse_font(display_name);
+            }
+        };
+        using FreetypeFont = Utils::Handle<FreetypeFontFuncs>;
+
+        Utils::MemoryFile file;
+        FreetypeFont ft_font;
+
+      public:
+        Font() {}
+        Font(std::string fname, int index = 0)
+        {
+            Create(fname, index);
+        }
+        void Create(std::string fname, int index = 0)
+        {
+            Utils::MemoryFile new_file(fname);
+            FreetypeFont new_tt_font({fname, new_file.Data(), new_file.Size(), index});
+            file    = std::move(new_file);
+            ft_font = std::move(new_tt_font);
+        }
+        void Destroy()
+        {
+            file.Destroy();
+            ft_font.destroy();
+        }
+        bool Exists() const
+        {
+            return bool(ft_font);
+        }
+
+        void SetSize(int pixel_height, int pixel_width = 0)
+        {
+            DebugAssert("Attempt to set size for a null font.", ft_font);
+            if (FT_Set_Pixel_Sizes(*ft_font, pixel_width, pixel_height))
+            {
+                std::string available_sizes;
+                if (ft_font.value()->num_fixed_sizes)
+                {
+                    for (int i = 0; i < ft_font.value()->num_fixed_sizes; i++)
+                    {
+                        if (i != 0)
+                            available_sizes += ',';
+                        available_sizes += Reflection::Interface::to_string(ivec2(ft_font.value()->available_sizes[i].width,
+                                                                                  ft_font.value()->available_sizes[i].height));
+                    }
+                }
+                else
+                    available_sizes = "?";
+                throw bad_font_size(ivec2(pixel_width, pixel_height), available_sizes);
+            }
+        }
+
+        int Ascent() const
+        {
+            return (*ft_font)->size->metrics.ascender >> 6; // It's stored in fixed point format (supposed to be already rounded) and we truncate it.
+        }
+        int Descent() const
+        {
+            return -((*ft_font)->size->metrics.descender >> 6); // Sic, we negate the result.
+        }
+        int Height() const
+        {
+            return Ascent() + Descent();
+        }
+        int LineSkip() const
+        {
+            return (*ft_font)->size->metrics.height >> 6; // Ha, freetype calls it 'height'.
+        }
+
+        bool HasChar(unsigned int ch) const
+        {
+            return (bool)FT_Get_Char_Index(*ft_font, ch);
+        }
+
+        enum RenderMode
+        {
+            normal     = FT_LOAD_TARGET_NORMAL,
+            light      = FT_LOAD_TARGET_LIGHT,
+            monochrome = FT_LOAD_TARGET_MONO,
+        };
+
+        struct CharInfo
+        {
+            unsigned char *data;
+            int pitch; // Difference between nearest row addresses.
+            bool monochrome; // If this is not set, the image uses 1 byte per pixel, otherwise it is 1 bit per pixel (most significant bits represent leftmost pixels).
+            ivec2 size, offset;
+            int advance;
+
+            unsigned char GetPixel(ivec2 pos)
+            {
+                if (monochrome)
+                    return ((data[pos.y * pitch + pos.x / 8] >> (7 - pos.x % 8)) & 1) ? 255 : 0;
+                else
+                    return data[pos.y * pitch + pos.x];
+            }
+        };
+
+        CharInfo Render(unsigned int ch, RenderMode mode) // Freetype caches the last rendered glyph for each font. After you render another one, the returned image reference is no longer valid.
+        {
+            if (FT_Load_Char(*ft_font, ch, FT_LOAD_RENDER | mode))
+                throw cant_render_glyph(ch, "Unknown.");
+            auto glyph = (*ft_font)->glyph;
+            auto bitmap = glyph->bitmap;
+            if (mode == monochrome ? bitmap.pixel_mode != FT_PIXEL_MODE_MONO : bitmap.pixel_mode != FT_PIXEL_MODE_GRAY || bitmap.num_grays != 256)
+                throw cant_render_glyph(ch, "Unexpected pixel format.");
+            CharInfo ret;
+            ret.data = bitmap.buffer;
+            ret.pitch = bitmap.pitch;
+            ret.monochrome = (mode == monochrome);
+            ret.size = ivec2(bitmap.width, bitmap.rows);
+            ret.offset = ivec2(glyph->bitmap_left, -glyph->bitmap_top);
+            ret.advance = (glyph->advance.x + (1 << 5)) >> 6; // The last 6 bits of `bitmap.advance` represent fractional part, here we perform poor man's rounding.
+            return ret;
+        }
     };
 
     class Image
@@ -387,6 +494,7 @@ namespace Graphics
             }
         }
 
+        /*
         struct AtlasFont
         {
             const TruetypeFont &ttfont;
@@ -451,7 +559,7 @@ namespace Graphics
                 else
                     data[pos.x + x + (pos.y + y) * width] = u8vec4(255, 255, 255, (bitmap[x + y * size.x] < alpha_threshold ? 0 : 255));
             }
-        }
+        }*/
     };
 
     class Texture
