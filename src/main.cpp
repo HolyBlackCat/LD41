@@ -11,7 +11,7 @@
 #include "program.h"
 #include "reflection.h"
 #include "renderers2d.h"
-#include "string.h"
+#include "strings.h"
 #include "template_utils.h"
 #include "ui.h"
 #include "window.h"
@@ -32,41 +32,27 @@ int main(int, char **)
     Renderers::Poly2D re(0x10000);
 
     Image img("test.png");
-
-    Font font("CatIV15.ttf");
-    font.SetSize(15);
-    auto glyph_img = font.Render('G', Font::monochrome);
-    for (int y = 0; y < glyph_img.size.y; y++)
-    for (int x = 0; x < glyph_img.size.x; x++)
-        img.At({x,y}) = u8vec4(255,255,255, glyph_img.GetPixel({x,y}));
-
-//    TruetypeFont ttfont("CatIV15.ttf");
-//    Font font;
-//    int arr[26*2+3];
-//    std::iota(arr, arr+26, 'a');
-//    std::iota(arr+26, arr+26*2, 'A');
-//    arr[26*2+0] = ' ';
-//    arr[26*2+1] = ',';
-//    arr[26*2+2] = '!';
-//    img.CreateFontAtlas({16,8}, {96,44}, {{ttfont, font, 15, 0, arr}}, 128);
-
+    Font font("CatIV15.ttf", 15);
+    CharMap ch_map;
+    uint16_t chars[26*2+1]{};
+    std::iota(chars, chars+26, 'a');
+    std::iota(chars+26, chars+26*2, 'A');
+    chars[26*2] = 0xffff;
+    Font::MakeAtlas(img, {16,8}, {128,64}, {{font, ch_map, Font::normal, chars}});
     Texture tex(img, Texture::linear);
     re.SetTexture(tex);
     re.SetMatrix(fmat4::ortho({0,600},{800,0},-1,1));
 
-//    auto RenderTextSimple = [&](ivec2 pos, const char *string)
-//    {
-//        while (*string)
-//        {
-//            if (font.Available(*string))
-//            {
-//                const auto &ref = font.Get(*string);
-//                re.Quad(pos + ref.offset, ref.size).tex(ref.tex_pos);
-//                pos.x += ref.advance;
-//            }
-//            string++;
-//        }
-//    };
+    auto RenderTextSimple = [&](ivec2 pos, const char *string)
+    {
+        while (*string)
+        {
+            const auto &ref = ch_map.Get(*string);
+            re.Quad(pos + ref.offset, ref.size).tex(ref.tex_pos);
+            pos.x += ref.advance;
+            string++;
+        }
+    };
 
     while (1)
     {
@@ -79,7 +65,7 @@ int main(int, char **)
         Clear(color);
 
         re.Quad(mouse.pos() + ivec2(0,-110), ivec2(191)).tex({0,0}).center();
-//        RenderTextSimple(mouse.pos(), "Hello, world!");
+        RenderTextSimple(mouse.pos(), "Hello, world!");
         re.Finish();
 
         win.Swap();

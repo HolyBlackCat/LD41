@@ -11,6 +11,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "exceptions.h"
 #include "template_utils.h"
@@ -431,23 +432,31 @@ namespace Utils
             return len;
         }
     };
+    template <typename T> using ViewRange = Range<const T>;
+    template <typename T> using ContiguousRange = Range<T, contiguous>;
+    template <typename T> using ViewContiguousRange = Range<const T, contiguous>;
 
 
     DefineExceptionInline(cant_read_file, "Unable to read from file.",
         (std::string,name,"File name")
     )
 
-    class MemoryFile
+    class MemoryFile // Manages a ref-counted memory copy of a file.
     {
-        std::vector<char> data;
+        struct Object
+        {
+            std::string name;
+            std::vector<unsigned char> bytes;
+        };
+        std::shared_ptr<Object> data;
       public:
         MemoryFile() {}
-        MemoryFile(const MemoryFile &) = delete;
-        MemoryFile &operator=(const MemoryFile &) = delete;
-        MemoryFile(MemoryFile &&) = default;
-        MemoryFile &operator=(MemoryFile &&) = default;
 
         MemoryFile(std::string fname)
+        {
+            Create(fname);
+        }
+        MemoryFile(const char *fname)
         {
             Create(fname);
         }
@@ -462,22 +471,30 @@ namespace Utils
             input.seekg(0, input.beg);
             if (size == decltype(size)(-1))
                 throw cant_read_file(fname);
-            data.resize(size);
-            input.read(data.data(), size);
+            data = std::make_shared<Object>(Object{fname, decltype(Object::bytes)(size)});
+            input.read((char *)data->bytes.data(), size);
             if (!input)
                 throw cant_read_file(fname);
         }
         void Destroy()
         {
-            data = {};
+            data.reset();
+        }
+        bool Exists() const
+        {
+            return bool(data);
         }
         const void *Data() const
         {
-            return data.data();
+            return data->bytes.data();
         }
         std::size_t Size() const
         {
-            return data.size();
+            return data->bytes.size();
+        }
+        const std::string &Name() const
+        {
+            return data->name;
         }
     };
 }

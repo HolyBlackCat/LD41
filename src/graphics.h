@@ -13,6 +13,7 @@
 #include <GLFL/glfl.h>
 #include <stb_image.h>
 #include <stb_image_write.h>
+#include <stb_rect_pack.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H // Ugh.
 
@@ -191,217 +192,6 @@ namespace Graphics
         }
     }
 
-    class CharMap
-    {
-      public:
-        struct Char
-        {
-            ivec2 tex_pos = {0,0}, size = {0,0}, offset = {0,0};
-            int advance = 0;
-        };
-      private:
-        static constexpr int pack_size = 256;
-        static_assert(0x10000 % pack_size == 0);
-
-        struct CharPack
-        {
-            std::bitset<pack_size> available; // Filled with zeroes by default.
-            std::vector<Char> glyphs;
-        };
-
-        int height = 0, ascent = 0, line_skip = 0;
-        bool enable_line_gap = 1;
-        std::vector<CharPack> data{0x10000 / pack_size};
-      public:
-        CharMap() {Set(0xffff, {});}
-        void Set(uint16_t index, const Char &glyph)
-        {
-            auto &sub_vec = data[index / pack_size];
-            sub_vec.available[index % pack_size] = 1;
-            if (sub_vec.glyphs.empty())
-                sub_vec.glyphs.resize(pack_size);
-            sub_vec.glyphs[index % pack_size] = glyph;
-        }
-        bool Available(uint16_t index) const
-        {
-            return data[index / pack_size].available[index % pack_size];
-        }
-        const Char &Get(uint16_t index) const // If no glyph with such index is found, returns 0xffff'th glyph.
-        {
-            if (!Available(index))
-                return GetDefault();
-            return data[index / pack_size].glyphs[index % pack_size];
-        }
-        const Char &GetDefault() const // Returns 0xffff'th glyph.
-        {
-            return Get(0xffff);
-        }
-
-        void SetMetrics(int new_height, int new_ascent, int new_line_skip)
-        {
-            height = new_height;
-            ascent = new_ascent;
-            line_skip = new_line_skip;
-        }
-        void EnableLineGap(bool new_enable_line_gap) // If enabled (default), LineSkip() returns height instead.
-        {
-            enable_line_gap = new_enable_line_gap;
-        }
-        int Height() const {return height;}
-        int Ascent() const {return ascent;}
-        int Descent() const {return height-ascent;}
-        int LineSkip() const {return enable_line_gap ? line_skip : height;}
-    };
-
-    class Font
-    {
-        struct FreetypeFontFuncs
-        {
-            template <typename> friend class ::Utils::Handle;
-            static FT_Face Create(const std::string &/*display_name*/, const void *data, std::size_t data_size, int font_index)
-            {
-                static FT_Library lib = 0;
-                if (!lib)
-                {
-                    if (FT_Init_FreeType(&lib))
-                        throw cant_init_freetype();
-                }
-
-                FT_Open_Args args{};
-                args.flags = FT_OPEN_MEMORY;
-                args.memory_base = (decltype(args.memory_base))data;
-                args.memory_size = data_size;
-
-                FT_Face ret;
-                if (FT_Open_Face(lib, &args, font_index, &ret))
-                    return 0;
-
-                return ret;
-            }
-            static void Destroy(FT_Face value)
-            {
-                FT_Done_Face(value);
-            }
-            static void Error(const std::string &display_name, const void *, std::size_t, int)
-            {
-                throw cant_parse_font(display_name);
-            }
-        };
-        using FreetypeFont = Utils::Handle<FreetypeFontFuncs>;
-
-        Utils::MemoryFile file;
-        FreetypeFont ft_font;
-
-      public:
-        Font() {}
-        Font(std::string fname, int index = 0)
-        {
-            Create(fname, index);
-        }
-        void Create(std::string fname, int index = 0)
-        {
-            Utils::MemoryFile new_file(fname);
-            FreetypeFont new_tt_font({fname, new_file.Data(), new_file.Size(), index});
-            file    = std::move(new_file);
-            ft_font = std::move(new_tt_font);
-        }
-        void Destroy()
-        {
-            file.Destroy();
-            ft_font.destroy();
-        }
-        bool Exists() const
-        {
-            return bool(ft_font);
-        }
-
-        void SetSize(int pixel_height, int pixel_width = 0)
-        {
-            DebugAssert("Attempt to set size for a null font.", ft_font);
-            if (FT_Set_Pixel_Sizes(*ft_font, pixel_width, pixel_height))
-            {
-                std::string available_sizes;
-                if (ft_font.value()->num_fixed_sizes)
-                {
-                    for (int i = 0; i < ft_font.value()->num_fixed_sizes; i++)
-                    {
-                        if (i != 0)
-                            available_sizes += ',';
-                        available_sizes += Reflection::Interface::to_string(ivec2(ft_font.value()->available_sizes[i].width,
-                                                                                  ft_font.value()->available_sizes[i].height));
-                    }
-                }
-                else
-                    available_sizes = "?";
-                throw bad_font_size(ivec2(pixel_width, pixel_height), available_sizes);
-            }
-        }
-
-        int Ascent() const
-        {
-            return (*ft_font)->size->metrics.ascender >> 6; // It's stored in fixed point format (supposed to be already rounded) and we truncate it.
-        }
-        int Descent() const
-        {
-            return -((*ft_font)->size->metrics.descender >> 6); // Sic, we negate the result.
-        }
-        int Height() const
-        {
-            return Ascent() + Descent();
-        }
-        int LineSkip() const
-        {
-            return (*ft_font)->size->metrics.height >> 6; // Ha, freetype calls it 'height'.
-        }
-
-        bool HasChar(unsigned int ch) const
-        {
-            return (bool)FT_Get_Char_Index(*ft_font, ch);
-        }
-
-        enum RenderMode
-        {
-            normal     = FT_LOAD_TARGET_NORMAL,
-            light      = FT_LOAD_TARGET_LIGHT,
-            monochrome = FT_LOAD_TARGET_MONO,
-        };
-
-        struct CharInfo
-        {
-            unsigned char *data;
-            int pitch; // Difference between nearest row addresses.
-            bool monochrome; // If this is not set, the image uses 1 byte per pixel, otherwise it is 1 bit per pixel (most significant bits represent leftmost pixels).
-            ivec2 size, offset;
-            int advance;
-
-            unsigned char GetPixel(ivec2 pos)
-            {
-                if (monochrome)
-                    return ((data[pos.y * pitch + pos.x / 8] >> (7 - pos.x % 8)) & 1) ? 255 : 0;
-                else
-                    return data[pos.y * pitch + pos.x];
-            }
-        };
-
-        CharInfo Render(unsigned int ch, RenderMode mode) // Freetype caches the last rendered glyph for each font. After you render another one, the returned image reference is no longer valid.
-        {
-            if (FT_Load_Char(*ft_font, ch, FT_LOAD_RENDER | mode))
-                throw cant_render_glyph(ch, "Unknown.");
-            auto glyph = (*ft_font)->glyph;
-            auto bitmap = glyph->bitmap;
-            if (mode == monochrome ? bitmap.pixel_mode != FT_PIXEL_MODE_MONO : bitmap.pixel_mode != FT_PIXEL_MODE_GRAY || bitmap.num_grays != 256)
-                throw cant_render_glyph(ch, "Unexpected pixel format.");
-            CharInfo ret;
-            ret.data = bitmap.buffer;
-            ret.pitch = bitmap.pitch;
-            ret.monochrome = (mode == monochrome);
-            ret.size = ivec2(bitmap.width, bitmap.rows);
-            ret.offset = ivec2(glyph->bitmap_left, -glyph->bitmap_top);
-            ret.advance = (glyph->advance.x + (1 << 5)) >> 6; // The last 6 bits of `bitmap.advance` represent fractional part, here we perform poor man's rounding.
-            return ret;
-        }
-    };
-
     class Image
     {
         std::vector<u8vec4> data;
@@ -436,18 +226,19 @@ namespace Graphics
             }
             return data[pos.x + pos.y * width];
         }
-        void Fill(ivec2 pos, ivec2 size, u8vec4 color)
+        void FastSet(ivec2 pos, u8vec4 color) // No bounds checking.
         {
-            pos = clamp(pos, 0, Size() - 1);
-            size = min(pos + size, Size());
-            for (int y = pos.y; y < size.y; y++)
-            for (int x = pos.y; x < size.x; x++)
-                data[x + y * width] = color;
+            data[pos.x + pos.y * width] = color;
         }
-        void Fill(u8vec4 color)
+        u8vec4 FastGet(ivec2 pos) // No bounds checking.
+        {
+            return data[pos.x + pos.y * width];
+        }
+        Image &Fill(u8vec4 color)
         {
             for (auto &it : data)
                 it = color;
+            return *this;
         }
 
         void FromMemory(ivec2 size, const char *ptr = 0)
@@ -560,6 +351,291 @@ namespace Graphics
                     data[pos.x + x + (pos.y + y) * width] = u8vec4(255, 255, 255, (bitmap[x + y * size.x] < alpha_threshold ? 0 : 255));
             }
         }*/
+    };
+
+    class CharMap
+    {
+      public:
+        struct Char
+        {
+            ivec2 tex_pos = {0,0}, size = {0,0}, offset = {0,0};
+            int advance = 0;
+        };
+      private:
+        static constexpr int pack_size = 256;
+        static_assert(0x10000 % pack_size == 0);
+
+        struct CharPack
+        {
+            std::bitset<pack_size> available; // Filled with zeroes by default.
+            std::vector<Char> glyphs;
+        };
+
+        int height = 0, ascent = 0, line_skip = 0;
+        bool enable_line_gap = 1;
+        std::vector<CharPack> data{0x10000 / pack_size};
+      public:
+        CharMap() {Set(0xffff, {});}
+        void Set(uint16_t index, const Char &glyph)
+        {
+            auto &sub_vec = data[index / pack_size];
+            sub_vec.available[index % pack_size] = 1;
+            if (sub_vec.glyphs.empty())
+                sub_vec.glyphs.resize(pack_size);
+            sub_vec.glyphs[index % pack_size] = glyph;
+        }
+        bool Available(uint16_t index) const
+        {
+            return data[index / pack_size].available[index % pack_size];
+        }
+        const Char &Get(uint16_t index) const // If no glyph with such index is found, returns 0xffff'th glyph.
+        {
+            if (!Available(index))
+                return GetDefault();
+            return data[index / pack_size].glyphs[index % pack_size];
+        }
+        const Char &GetDefault() const // Returns 0xffff'th glyph.
+        {
+            return Get(0xffff);
+        }
+
+        void SetMetrics(int new_height, int new_ascent, int new_line_skip)
+        {
+            height = new_height;
+            ascent = new_ascent;
+            line_skip = new_line_skip;
+        }
+        void EnableLineGap(bool new_enable_line_gap) // If enabled (default), LineSkip() returns height instead.
+        {
+            enable_line_gap = new_enable_line_gap;
+        }
+        int Height() const {return height;}
+        int Ascent() const {return ascent;}
+        int Descent() const {return height-ascent;}
+        int LineSkip() const {return enable_line_gap ? line_skip : height;}
+    };
+
+    class Font
+    {
+        struct FreetypeFontFuncs
+        {
+            template <typename> friend class ::Utils::Handle;
+            static FT_Face Create(const std::string &/*display_name*/, const void *data, std::size_t data_size, int font_index)
+            {
+                static FT_Library lib = 0;
+                if (!lib)
+                {
+                    if (FT_Init_FreeType(&lib))
+                        throw cant_init_freetype();
+                }
+
+                FT_Open_Args args{};
+                args.flags = FT_OPEN_MEMORY;
+                args.memory_base = (decltype(args.memory_base))data;
+                args.memory_size = data_size;
+
+                FT_Face ret;
+                if (FT_Open_Face(lib, &args, font_index, &ret))
+                    return 0;
+
+                return ret;
+            }
+            static void Destroy(FT_Face value)
+            {
+                FT_Done_Face(value);
+            }
+            static void Error(const std::string &display_name, const void *, std::size_t, int)
+            {
+                throw cant_parse_font(display_name);
+            }
+        };
+        using FreetypeFont = Utils::Handle<FreetypeFontFuncs>;
+
+        Utils::MemoryFile file;
+        FreetypeFont ft_font;
+
+      public:
+        Font() {}
+        Font(Utils::MemoryFile new_file, ivec2 size, int index = 0) // One of the components of `size` can be 0, which means 'same as other component'. (That's how freetype works.)
+        {
+            Create(new_file, size, index);
+        }
+        Font(Utils::MemoryFile new_file, int size, int index = 0)
+        {
+            Create(new_file, size, index);
+        }
+        void Create(Utils::MemoryFile new_file, ivec2 size, int index = 0)
+        {
+            FreetypeFont new_ft_font({new_file.Name(), new_file.Data(), new_file.Size(), index});
+            if (FT_Set_Pixel_Sizes(*new_ft_font, size.x, size.y))
+            {
+                std::string available_sizes;
+                if (new_ft_font.value()->num_fixed_sizes)
+                {
+                    for (int i = 0; i < new_ft_font.value()->num_fixed_sizes; i++)
+                    {
+                        if (i != 0)
+                            available_sizes += ',';
+                        available_sizes += Reflection::Interface::to_string(ivec2(new_ft_font.value()->available_sizes[i].width,
+                                                                                  new_ft_font.value()->available_sizes[i].height));
+                    }
+                }
+                else
+                    available_sizes = "?";
+                throw bad_font_size(size, available_sizes);
+            }
+            file    = std::move(new_file);
+            ft_font = std::move(new_ft_font);
+        }
+        void Create(Utils::MemoryFile new_file, int size, int index = 0)
+        {
+            Create(new_file, {0, size}, index);
+        }
+        void Destroy()
+        {
+            file.Destroy();
+            ft_font.destroy();
+        }
+        bool Exists() const
+        {
+            return bool(ft_font);
+        }
+
+        int Ascent() const
+        {
+            return (*ft_font)->size->metrics.ascender >> 6; // It's stored in fixed point format (supposed to be already rounded) and we truncate it.
+        }
+        int Descent() const
+        {
+            return -((*ft_font)->size->metrics.descender >> 6); // Sic, we negate the result.
+        }
+        int Height() const
+        {
+            return Ascent() + Descent();
+        }
+        int LineSkip() const
+        {
+            return (*ft_font)->size->metrics.height >> 6; // Ha, freetype calls it 'height'.
+        }
+
+        bool HasChar(uint16_t ch) const
+        {
+            return (bool)FT_Get_Char_Index(*ft_font, ch);
+        }
+
+        enum RenderMode
+        {
+            normal = FT_LOAD_TARGET_NORMAL,
+            light  = FT_LOAD_TARGET_LIGHT,
+            mono   = FT_LOAD_TARGET_MONO,
+        };
+
+        struct CharData
+        {
+            std::vector<unsigned char> data;
+            ivec2 size, offset;
+            int advance;
+
+            void CopyImage(Image &img, ivec2 pos, u8vec3 color = {255,255,255})
+            {
+                for (int y = 0; y < size.y; y++)
+                for (int x = 0; x < size.x; x++)
+                    ((u8vec4 *)img.Data())[img.Size().x * (y + pos.y) + x + pos.x] = color.to_vec4(data[size.x * y + x]);
+            }
+        };
+
+        CharData GetChar(uint16_t ch, RenderMode mode) // Freetype caches the last rendered glyph for each font. After you render another one, the returned image reference is no longer valid.
+        {
+            if (FT_Load_Char(*ft_font, ch, FT_LOAD_RENDER | mode))
+                throw cant_render_glyph(ch, "Unknown.");
+            auto glyph = (*ft_font)->glyph;
+            auto bitmap = glyph->bitmap;
+            if (mode == mono ? bitmap.pixel_mode != FT_PIXEL_MODE_MONO : bitmap.pixel_mode != FT_PIXEL_MODE_GRAY || bitmap.num_grays != 256)
+                throw cant_render_glyph(ch, "Unexpected pixel format.");
+            CharData ret;
+            ret.size = ivec2(bitmap.width, bitmap.rows);
+            ret.offset = ivec2(glyph->bitmap_left, -glyph->bitmap_top);
+            ret.advance = (glyph->advance.x + (1 << 5)) >> 6; // The last 6 bits of `bitmap.advance` represent fractional part, here we perform a poor man's rounding.
+            ret.data.resize(ret.size.product());
+            if (mode == mono)
+            {
+                for (int y = 0; y < ret.size.y; y++)
+                {
+                    unsigned char byte, *byte_ptr = bitmap.buffer + bitmap.pitch * y;
+                    for (int x = 0; x < ret.size.x; x++)
+                    {
+                        if (x % 8 == 0)
+                            byte = *byte_ptr++;
+                        ret.data[ret.size.x * y + x] = (byte & 128 ? 255 : 0);
+                        byte <<= 1;
+                    }
+                }
+            }
+            else
+            {
+                for (int y = 0; y < ret.size.y; y++)
+                    std::copy(bitmap.buffer + bitmap.pitch * y, bitmap.buffer + bitmap.pitch * y + ret.size.x, ret.data.data() + ret.size.x * y);
+            }
+            return ret;
+        }
+
+        struct AtlasEntry
+        {
+            Font &font;
+            CharMap &map;
+            RenderMode mode;
+            Utils::ViewRange<uint16_t> chars;
+        };
+
+        static void MakeAtlas(Image &img, ivec2 pos, ivec2 size, Utils::ViewRange<AtlasEntry> entries)
+        {
+            DebugAssert("A rectange specified for a ", (pos >= 0).all() && (pos + size < img.Size()).all());
+            int ch_count = 0;
+            for (const auto &it : entries)
+                ch_count += it.chars.size();
+
+            stbrp_context packer_context;
+            std::vector<stbrp_node> packer_buffer(ch_count);
+            stbrp_init_target(&packer_context, size.x-1, size.y-1, packer_buffer.data(), packer_buffer.size()); // -1 is for 1 pixel margin. No cleanup is necessary, as well as no error checking.
+            std::vector<CharData> chars;
+            chars.reserve(ch_count);
+            std::vector<stbrp_rect> char_rects;
+            char_rects.reserve(ch_count);
+            for (const auto &entry : entries)
+            for (const auto &ch : entry.chars)
+            {
+                auto font_ch = entry.font.GetChar(ch, entry.mode);
+                stbrp_rect rect;
+                rect.w = font_ch.size.x + 1; // 1 pixel margin
+                rect.h = font_ch.size.y + 1;
+                char_rects.push_back(rect);
+                chars.push_back(std::move(font_ch));
+            }
+            if (!stbrp_pack_rects(&packer_context, char_rects.data(), char_rects.size()))
+                throw not_enough_texture_atlas_space(pos, size);
+            int i = 0;
+            for (const auto &entry : entries)
+            {
+                entry.map.SetMetrics(entry.font.Height(), entry.font.Ascent(), entry.font.LineSkip());
+                for (const auto &ch : entry.chars)
+                {
+                    ivec2 dst_pos = pos + ivec2(char_rects[i].x, char_rects[i].y) + 1;
+                    chars[i].CopyImage(img, dst_pos);
+                    for (int x = -1; x < chars[i].size.x+1; x++)
+                    {
+                        img.FastSet(dst_pos + ivec2(x, -1             ), {0,0,0,0});
+                        img.FastSet(dst_pos + ivec2(x, chars[i].size.y), {0,0,0,0});
+                    }
+                    for (int y = 0; y < chars[i].size.y; y++) // Sic! The range for x is different.
+                    {
+                        img.FastSet(dst_pos + ivec2(-1             , y), {0,0,0,0});
+                        img.FastSet(dst_pos + ivec2(chars[i].size.x, y), {0,0,0,0});
+                    }
+                    entry.map.Set(ch, {dst_pos, chars[i].size, chars[i].offset, chars[i].advance});
+                    i++;
+                }
+            }
+        }
     };
 
     class Texture
