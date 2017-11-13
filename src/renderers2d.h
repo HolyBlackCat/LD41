@@ -372,8 +372,6 @@ namespace Renderers
             fvec3 m_color = {1,1,1};
             float m_alpha = 1, m_beta = 1;
             int m_spacing = 0;
-            int m_line_gap = 0;
-            ivec2 m_align = {0,0};
             bool m_kerning = 1;
             ivec2 m_offset = {0,0};
             bool m_continue = 0;
@@ -383,58 +381,12 @@ namespace Renderers
                 from.queue = 0;
             }
 
-            int ComputeHeight() const
-            {
-                int ret = m_ch_map->LineSkip();
-                for (char it : m_str)
-                    if (it == '\n')
-                        ret += m_line_gap + m_ch_map->LineSkip();
-                return ret;
-            }
-            int ComputeLineWidth(std::string_view::iterator str) const // Stops at '\n' or '\0'.
-            {
-                int ret = -m_spacing;
-                uint16_t prev_ch = 0xffff;
-                while (str != m_str.end() && *str != '\n')
-                {
-                    if (!u8isfirstbyte(str))
-                        continue;
-                    uint16_t ch = u8decode(str);
-                    ret += m_ch_map->Get(ch).advance + m_spacing;
-                    if (m_kerning)
-                        ret += m_ch_map->Kerning(prev_ch, ch);
-                    prev_ch = ch;
-                    str++;
-                }
-                return ret;
-            }
-
             void Render()
             {
                 DebugAssert("2D poly renderer: Text with no font specified.", m_ch_map != 0);
 
                 if (!queue)
                     return;
-
-                if (!m_continue)
-                {
-                    if (m_align.x != -1)
-                    {
-                        int w = ComputeLineWidth(m_str.begin());
-                        if (m_align.x == 0)
-                            w = (w + 1) / 2;
-                        m_offset.x -= w;
-                    }
-
-                    if (m_align.y != -1)
-                    {
-                        int h = ComputeHeight();
-                        if (m_align.y == 0)
-                            h = (h + 1) / 2;
-                        m_offset.y -= h;
-                    }
-                }
-
 
                 auto it = m_str.begin();
 
@@ -444,21 +396,6 @@ namespace Renderers
                 {
                     if (!u8isfirstbyte(it))
                     {
-                        it++;
-                        continue;
-                    }
-                    if (*it == '\n')
-                    {
-                        m_offset.y += m_ch_map->LineSkip() + m_line_gap;
-                        if (m_align.x == -1)
-                            m_offset.x = 0;
-                        else
-                        {
-                            int w = ComputeLineWidth(it+1);
-                            if (m_align.x == 0)
-                                w = (w + 1) / 2;
-                            m_offset.x = -w;
-                        }
                         it++;
                         continue;
                     }
@@ -594,31 +531,6 @@ namespace Renderers
             ref spacing_f(float s)
             {
                 m_spacing += s;
-                return (ref)*this;
-            }
-            ref line_gap(int g)
-            {
-                line_gap_f(g);
-                return (ref)*this;
-            }
-            ref line_gap_f(float g)
-            {
-                m_line_gap += g;
-                return (ref)*this;
-            }
-            ref align_h(int h)
-            {
-                m_align.x = h;
-                return (ref)*this;
-            }
-            ref align_v(int v)
-            {
-                m_align.y = v;
-                return (ref)*this;
-            }
-            ref align(ivec2 a)
-            {
-                m_align = a;
                 return (ref)*this;
             }
             ref kerning(bool k) // Enabled by default

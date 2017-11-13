@@ -273,6 +273,15 @@ namespace Graphics
             return data.size() != 0;
         }
 
+        [[nodiscard]] static Image Memory(ivec2 size, const char *ptr = 0)
+        {
+            return Image(size, ptr);
+        }
+        [[nodiscard]] static Image File(std::string fname, bool flip_y = 0)
+        {
+            return Image(fname, flip_y);
+        }
+
         void SaveToFile(Format format, std::string fname)
         {
             switch (format)
@@ -638,7 +647,7 @@ namespace Graphics
 
         static void MakeAtlas(Image &img, ivec2 pos, ivec2 size, Utils::ViewRange<AtlasEntry> entries)
         {
-            DebugAssert("A rectange specified for a ", (pos >= 0).all() && (pos + size < img.Size()).all());
+            DebugAssert("A rectange specified for a font atlas doesn't fit into the image.", (pos >= 0).all() && (pos + size <= img.Size()).all());
             int ch_count = 0;
             for (const auto &it : entries)
                 ch_count += it.chars.size();
