@@ -77,6 +77,9 @@
 		<Unit filename="libs/glfl.cpp" />
 		<Unit filename="src/events.cpp" />
 		<Unit filename="src/events.h" />
+		<Unit filename="src/everything.h">
+			<Option compile="1" />
+		</Unit>
 		<Unit filename="src/exceptions.h" />
 		<Unit filename="src/graphics.cpp">
 			<Option compiler="gcc" use="1" buildCommand="$compiler $options -O3 $includes -c $file -o $object" />
