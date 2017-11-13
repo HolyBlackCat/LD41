@@ -6,6 +6,7 @@
 #include "graphics.h"
 #include "mat.h"
 #include "reflection.h"
+#include "strings.h"
 #include "template_utils.h"
 
 namespace Renderers
@@ -30,6 +31,9 @@ namespace Renderers
         Graphics::RenderQueue<Attributes, Graphics::triangles> queue;
         Uniforms uni;
 
+        const Graphics::CharMap *ch_map = 0;
+
+      public:
         class Quad_t : TemplateUtils::MoveFunc<Quad_t>
         {
             using ref = Quad_t &&;
@@ -225,6 +229,11 @@ namespace Renderers
                 }
                 return (ref)*this;
             }
+            ref matrix(fmat2 m)
+            {
+                matrix(m.to_mat3());
+                return (ref)*this;
+            }
             ref rotate(float a) // Uses `matrix()`.
             {
                 matrix(fmat3::rotate2D(a));
@@ -349,7 +358,276 @@ namespace Renderers
                 return (ref)*this;
             }
         };
-      public:
+        class Text_t : TemplateUtils::MoveFunc<Text_t>
+        {
+            using ref = Text_t &&;
+
+            // The constructor sets those:
+            decltype(Poly2D::queue) *queue;
+            const Graphics::CharMap *m_ch_map;
+            fvec2 m_pos;
+            std::string_view m_str;
+
+            fmat3 m_matrix = fmat3::identity();
+            fvec3 m_color = {1,1,1};
+            float m_alpha = 1, m_beta = 1;
+            int m_spacing = 0;
+            int m_line_gap = 0;
+            ivec2 m_align = {0,0};
+            bool m_kerning = 1;
+            ivec2 m_offset = {0,0};
+            bool m_continue = 0;
+
+            static void OnMove(Text_t &&from, Text_t &/*to*/)
+            {
+                from.queue = 0;
+            }
+
+            int ComputeHeight() const
+            {
+                int ret = m_ch_map->LineSkip();
+                for (char it : m_str)
+                    if (it == '\n')
+                        ret += m_line_gap + m_ch_map->LineSkip();
+                return ret;
+            }
+            int ComputeLineWidth(std::string_view::iterator str) const // Stops at '\n' or '\0'.
+            {
+                int ret = -m_spacing;
+                uint16_t prev_ch = 0xffff;
+                while (str != m_str.end() && *str != '\n')
+                {
+                    if (!u8isfirstbyte(str))
+                        continue;
+                    uint16_t ch = u8decode(str);
+                    ret += m_ch_map->Get(ch).advance + m_spacing;
+                    if (m_kerning)
+                        ret += m_ch_map->Kerning(prev_ch, ch);
+                    prev_ch = ch;
+                    str++;
+                }
+                return ret;
+            }
+
+            void Render()
+            {
+                DebugAssert("2D poly renderer: Text with no font specified.", m_ch_map != 0);
+
+                if (!queue)
+                    return;
+
+                if (!m_continue)
+                {
+                    if (m_align.x != -1)
+                    {
+                        int w = ComputeLineWidth(m_str.begin());
+                        if (m_align.x == 0)
+                            w = (w + 1) / 2;
+                        m_offset.x -= w;
+                    }
+
+                    if (m_align.y != -1)
+                    {
+                        int h = ComputeHeight();
+                        if (m_align.y == 0)
+                            h = (h + 1) / 2;
+                        m_offset.y -= h;
+                    }
+                }
+
+
+                auto it = m_str.begin();
+
+                uint16_t prev_ch = 0xffff;
+
+                while (it != m_str.end())
+                {
+                    if (!u8isfirstbyte(it))
+                    {
+                        it++;
+                        continue;
+                    }
+                    if (*it == '\n')
+                    {
+                        m_offset.y += m_ch_map->LineSkip() + m_line_gap;
+                        if (m_align.x == -1)
+                            m_offset.x = 0;
+                        else
+                        {
+                            int w = ComputeLineWidth(it+1);
+                            if (m_align.x == 0)
+                                w = (w + 1) / 2;
+                            m_offset.x = -w;
+                        }
+                        it++;
+                        continue;
+                    }
+
+                    uint16_t ch = u8decode(it);
+
+                    const auto &info = m_ch_map->Get(ch);
+
+                    Quad_t(queue, m_pos, info.size)
+                        .tex(info.tex_pos)
+                        .alpha(m_alpha).beta(m_beta).color(m_color).mix(0)
+                        .center(info.size.div_x(2)).matrix(m_matrix /mul/ fmat3::translate2D(m_offset + info.offset + ivec2(info.size.x / 2, m_ch_map->Ascent() + info.size.y)));
+
+                    m_offset.x += info.advance + m_spacing + (m_kerning ? m_ch_map->Kerning(prev_ch, ch) : 0);
+                    prev_ch = ch;
+
+                    it++;
+                }
+            }
+
+          public:
+            Text_t(decltype(Poly2D::queue) *queue, const Graphics::CharMap *ch_map, fvec2 pos, std::string_view str) : queue(queue), m_ch_map(ch_map), m_pos(pos), m_str(str) {}
+
+            Text_t(const Text_t &) = delete;
+            Text_t &operator=(const Text_t &) = delete;
+
+            Text_t(Text_t &&) = default;
+            Text_t &operator=(Text_t &&) = default;
+
+            ~Text_t()
+            {
+                Render();
+            }
+
+            ref font(Graphics::CharMap &&) = delete;
+            ref font(const Graphics::CharMap &map)
+            {
+                m_ch_map = &map;
+                return (ref)*this;
+            }
+            ref move(ivec2 o) // Usual translation.
+            {
+                m_pos += o;
+                return (ref)*this;
+            }
+            ref offset(ivec2 o) // This is not for usual translation, but for moving the first line only (useful for combining) styles.
+            {
+                m_offset += o;
+                return (ref)*this;
+            }
+            ref append(std::string_view str)
+            {
+                Render();
+                m_continue = 1;
+                m_str = str;
+                return (ref)*this;
+            }
+            ref render_this()
+            {
+                ivec2 pos_copy = m_pos;
+                ivec2 offset_copy = m_offset;
+                Render();
+                m_pos = pos_copy;
+                m_offset = offset_copy;
+                return (ref)*this;
+            }
+
+            ref matrix(fmat3 m) // Multiplies the matrix by `m`.
+            {
+                m_matrix = m_matrix /mul/ m;
+                return (ref)*this;
+            }
+            ref back_matrix(fmat3 m) // Multiplies `m` by the matrix.
+            {
+                m_matrix = m /mul/ m_matrix;
+                return (ref)*this;
+            }
+            ref matrix(fmat2 m) // Multiplies the matrix by `m`.
+            {
+                matrix(m.to_mat3());
+                return (ref)*this;
+            }
+            ref back_matrix(fmat2 m) // Multiplies `m` by the matrix.
+            {
+                back_matrix(m.to_mat3());
+                return (ref)*this;
+            }
+            ref rotate(float a) // Uses `matrix()`.
+            {
+                matrix(fmat3::rotate2D(a));
+                return (ref)*this;
+            }
+            ref scale(ivec2 s) // Uses `matrix()`.
+            {
+                scale_f(s);
+                return (ref)*this;
+            }
+            ref scale_f(fvec2 s) // Uses `matrix()`.
+            {
+                matrix(fmat3::scale(s));
+                return (ref)*this;
+            }
+            ref scale(int s) // Uses `matrix()`.
+            {
+                scale(ivec2(s));
+                return (ref)*this;
+            }
+            ref scale_f(float s) // Uses `matrix()`.
+            {
+                scale(fvec2(s));
+                return (ref)*this;
+            }
+            ref color(fvec3 c)
+            {
+                m_color = c;
+                return (ref)*this;
+            }
+            ref alpha(float a)
+            {
+                m_alpha = a;
+                return (ref)*this;
+            }
+            ref beta(float b)
+            {
+                m_beta = b;
+                return (ref)*this;
+            }
+            ref spacing(int s)
+            {
+                spacing_f(s);
+                return (ref)*this;
+            }
+            ref spacing_f(float s)
+            {
+                m_spacing += s;
+                return (ref)*this;
+            }
+            ref line_gap(int g)
+            {
+                line_gap_f(g);
+                return (ref)*this;
+            }
+            ref line_gap_f(float g)
+            {
+                m_line_gap += g;
+                return (ref)*this;
+            }
+            ref align_h(int h)
+            {
+                m_align.x = h;
+                return (ref)*this;
+            }
+            ref align_v(int v)
+            {
+                m_align.y = v;
+                return (ref)*this;
+            }
+            ref align(ivec2 a)
+            {
+                m_align = a;
+                return (ref)*this;
+            }
+            ref kerning(bool k) // Enabled by default
+            {
+                m_kerning = k;
+                return (ref)*this;
+            }
+        };
+
         Poly2D() {}
         Poly2D(int size, const Graphics::Shader::Config &cfg = {})
         {
@@ -437,6 +715,11 @@ void main()
         }
         void SetTexture(const Graphics::Texture &&) = delete;
 
+        void SetDefaultFont(const Graphics::CharMap &map)
+        {
+            ch_map = &map;
+        }
+
         Quad_t Quad(ivec2 pos, ivec2 size)
         {
             return {&queue, pos, size};
@@ -444,6 +727,14 @@ void main()
         Quad_t Quad_f(fvec2 pos, fvec2 size)
         {
             return {&queue, pos, size};
+        }
+        Text_t Text(ivec2 pos, std::string_view str)
+        {
+            return {&queue, ch_map, pos, str};
+        }
+        Text_t Text_f(fvec2 pos, std::string_view str)
+        {
+            return {&queue, ch_map, pos, str};
         }
     };
 }

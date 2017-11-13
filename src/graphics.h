@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <bitset>
 #include <cstddef>
+#include <functional>
 #include <ios>
 #include <string>
 #include <type_traits>
@@ -374,6 +375,9 @@ namespace Graphics
         int height = 0, ascent = 0, line_skip = 0;
         bool enable_line_gap = 1;
         std::vector<CharPack> data{0x10000 / pack_size};
+
+        using kerning_func_t = std::function<int(uint16_t, uint16_t)>;
+        kerning_func_t kerning_func;
       public:
         CharMap() {Set(0xffff, {});}
         void Set(uint16_t index, const Char &glyph)
@@ -413,6 +417,22 @@ namespace Graphics
         int Ascent() const {return ascent;}
         int Descent() const {return height-ascent;}
         int LineSkip() const {return enable_line_gap ? line_skip : height;}
+        int LineGap() const {return LineSkip() - height;}
+
+        void SetKerning(kerning_func_t func)
+        {
+            kerning_func = func;
+        }
+        void ResetKerning()
+        {
+            kerning_func = 0;
+        }
+        int Kerning(uint16_t a, uint16_t b) const
+        {
+            if (!kerning_func)
+                return 0;
+            return kerning_func(a, b);
+        }
     };
 
     class Font
@@ -517,7 +537,35 @@ namespace Graphics
         {
             return (*ft_font)->size->metrics.height >> 6; // Ha, freetype calls it 'height'.
         }
-
+        int LineGap() const
+        {
+            return LineSkip() - Height();
+        }
+        bool HasKerning() const
+        {
+            return FT_HAS_KERNING(*ft_font);
+        }
+        int Kerning(uint16_t a, uint16_t b) const
+        {
+            if (!HasKerning())
+                return 0;
+            FT_Vector vec;
+            if (FT_Get_Kerning(*ft_font, a, b, FT_KERNING_DEFAULT, &vec))
+                return 0;
+            return (vec.x + (1 << 5)) >> 6;
+        }
+        std::function<int(uint16_t, uint16_t)> KerningFunc() const // Returns 0 if there is no kerning for this font. Freetype font pointer is copied into the function, you should keep corresponding object alive.
+        {
+            if (!HasKerning())
+                return 0;
+            return [fnt = *ft_font](uint16_t a, uint16_t b) -> int
+            {
+                FT_Vector vec;
+                if (FT_Get_Kerning(fnt, a, b, FT_KERNING_DEFAULT, &vec))
+                    return 0;
+                return (vec.x + (1 << 5)) >> 6;
+            };
+        }
         bool HasChar(uint16_t ch) const
         {
             return (bool)FT_Get_Char_Index(*ft_font, ch);
@@ -585,6 +633,7 @@ namespace Graphics
             CharMap &map;
             RenderMode mode;
             Utils::ViewRange<uint16_t> chars;
+            bool kerning = 1; // If this is enabled, the font object must remain alive as long as kerning is used.
         };
 
         static void MakeAtlas(Image &img, ivec2 pos, ivec2 size, Utils::ViewRange<AtlasEntry> entries)
@@ -617,6 +666,7 @@ namespace Graphics
             for (const auto &entry : entries)
             {
                 entry.map.SetMetrics(entry.font.Height(), entry.font.Ascent(), entry.font.LineSkip());
+                entry.map.SetKerning(entry.font.KerningFunc());
                 for (const auto &ch : entry.chars)
                 {
                     ivec2 dst_pos = pos + ivec2(char_rects[i].x, char_rects[i].y) + 1;
@@ -1044,7 +1094,7 @@ namespace Graphics
                 prim_count *= 3;
             std::vector<T> new_data(prim_count); // Extra exception safety.
             buffer.Create();
-            buffer.SetData(prim_count);
+            buffer.SetData(prim_count, 0, stream_draw);
             data = std::move(new_data);
             pos = 0;
         }

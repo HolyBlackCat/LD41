@@ -130,6 +130,11 @@ namespace Strings
             }
         }
     }
+
+    inline namespace Encodings
+    {
+        const uint16_t (&cp1251())[256];
+    }
 }
 
 using Strings::Str;

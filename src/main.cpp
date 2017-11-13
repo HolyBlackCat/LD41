@@ -34,25 +34,11 @@ int main(int, char **)
     Image img("test.png");
     Font font("CatIV15.ttf", 15);
     CharMap ch_map;
-    uint16_t chars[26*2+1]{};
-    std::iota(chars, chars+26, 'a');
-    std::iota(chars+26, chars+26*2, 'A');
-    chars[26*2] = 0xffff;
-    Font::MakeAtlas(img, {16,8}, {128,64}, {{font, ch_map, Font::normal, chars}});
-    Texture tex(img, Texture::linear);
+    Font::MakeAtlas(img, {8,4}, {128,128}, {{font, ch_map, Font::normal, (uint16_t(&)[127])Strings::cp1251()}});
+    Texture tex(img, Texture::nearest);
     re.SetTexture(tex);
     re.SetMatrix(fmat4::ortho({0,600},{800,0},-1,1));
-
-    auto RenderTextSimple = [&](ivec2 pos, const char *string)
-    {
-        while (*string)
-        {
-            const auto &ref = ch_map.Get(*string);
-            re.Quad(pos + ref.offset, ref.size).tex(ref.tex_pos);
-            pos.x += ref.advance;
-            string++;
-        }
-    };
+    re.SetDefaultFont(ch_map);
 
     while (1)
     {
@@ -64,8 +50,7 @@ int main(int, char **)
         Graphics::CheckErrors();
         Clear(color);
 
-        re.Quad(mouse.pos() + ivec2(0,-110), ivec2(191)).tex({0,0}).center();
-        RenderTextSimple(mouse.pos(), "Hello, world!");
+        re.Text(mouse.pos(), "Hello").color({0,0.5,1}).align({-1,-1}).append("world!").color({1,0.5,0});
         re.Finish();
 
         win.Swap();
