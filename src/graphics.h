@@ -559,7 +559,7 @@ namespace Graphics
             if (!HasKerning())
                 return 0;
             FT_Vector vec;
-            if (FT_Get_Kerning(*ft_font, a, b, FT_KERNING_DEFAULT, &vec))
+            if (FT_Get_Kerning(*ft_font, FT_Get_Char_Index(*ft_font, a), FT_Get_Char_Index(*ft_font, b), FT_KERNING_DEFAULT, &vec))
                 return 0;
             return (vec.x + (1 << 5)) >> 6;
         }
@@ -570,7 +570,7 @@ namespace Graphics
             return [fnt = *ft_font](uint16_t a, uint16_t b) -> int
             {
                 FT_Vector vec;
-                if (FT_Get_Kerning(fnt, a, b, FT_KERNING_DEFAULT, &vec))
+                if (FT_Get_Kerning(fnt, FT_Get_Char_Index(fnt, a), FT_Get_Char_Index(fnt, b), FT_KERNING_DEFAULT, &vec))
                     return 0;
                 return (vec.x + (1 << 5)) >> 6;
             };

@@ -404,12 +404,15 @@ namespace Renderers
 
                     const auto &info = m_ch_map->Get(ch);
 
+                    if (m_kerning)
+                        m_offset.x += m_ch_map->Kerning(prev_ch, ch);
+
                     Quad_t(queue, m_pos, info.size)
                         .tex(info.tex_pos)
                         .alpha(m_alpha).beta(m_beta).color(m_color).mix(0)
                         .center(info.size.div_x(2)).matrix(m_matrix /mul/ fmat3::translate2D(m_offset + info.offset + ivec2(info.size.x / 2, m_ch_map->Ascent() + info.size.y)));
 
-                    m_offset.x += info.advance + m_spacing + (m_kerning ? m_ch_map->Kerning(prev_ch, ch) : 0);
+                    m_offset.x += info.advance + m_spacing;
                     prev_ch = ch;
 
                     it++;
