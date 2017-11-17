@@ -210,11 +210,6 @@ namespace Renderers
             }
             ref center()
             {
-                pixel_center(floor(m_size / 2));
-                return (ref)*this;
-            }
-            ref center_f()
-            {
                 pixel_center(m_size / 2);
                 return (ref)*this;
             }
@@ -355,6 +350,231 @@ namespace Renderers
             ref flip_y(bool f = 1) // Flips texture vertically if it was specified. Updates the center accordingly if it was specified.
             {
                 m_flip_y = f;
+                return (ref)*this;
+            }
+        };
+        class Triangle_t : TemplateUtils::MoveFunc<Triangle_t>
+        {
+            using ref = Triangle_t &&;
+
+            // The constructor sets those:
+            decltype(Poly2D::queue) *queue;
+            fvec2 m_pos, m_vectices[3];
+
+            bool has_texture = 0;
+            fvec2 m_tex_pos[3] = {};
+
+            bool has_matrix = 0;
+            fmat3 m_matrix = fmat3::identity();
+
+            bool has_color = 0;
+            fvec3 m_colors[3] {};
+
+            bool has_tex_color_fac = 0;
+            float m_tex_color_factors[3] = {1,1,1};
+
+            float m_alpha[3] = {1,1,1};
+            float m_beta[3] = {1,1,1};
+
+            static void OnMove(Triangle_t &&from, Triangle_t &/*to*/)
+            {
+                from.queue = 0;
+            }
+          public:
+            Triangle_t(decltype(Poly2D::queue) *queue, fvec2 pos, fvec2 a, fvec2 b, fvec2 c) : queue(queue), m_pos(pos), m_vectices{a, b, c} {}
+
+            Triangle_t(const Triangle_t &) = delete;
+            Triangle_t &operator=(const Triangle_t &) = delete;
+
+            Triangle_t(Triangle_t &&) = default;
+            Triangle_t &operator=(Triangle_t &&) = default;
+
+            ~Triangle_t()
+            {
+                if (!queue)
+                    return;
+
+                DebugAssert("2D poly renderer: Triangle with no texture nor color specified.", has_texture || has_color);
+                DebugAssert("2D poly renderer: Triangle with texture and color, but without a mixing factor.", (has_texture && has_color) == has_tex_color_fac);
+
+                Attributes out[3];
+
+                if (has_texture)
+                {
+                    for (int i = 0; i < 3; i++)
+                    {
+                        out[i].color = m_colors[i].to_vec4(0);
+                        out[i].factors.x = m_tex_color_factors[i];
+                        out[i].factors.y = m_alpha[i];
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < 3; i++)
+                    {
+                        out[i].color = m_colors[i].to_vec4(m_alpha[i]);
+                        out[i].factors.x = out[i].factors.y = 0;
+                    }
+                }
+
+                for (int i = 0; i < 3; i++)
+                {
+                    out[i].factors.z = m_beta[i];
+                    out[i].texture_pos = m_tex_pos[i];
+                }
+
+                if (has_matrix)
+                {
+                    for (int i = 0; i < 3; i++)
+                        out[i].pos = m_pos + (m_matrix /mul/ m_vectices[i].to_vec3(1)).to_vec2();
+                }
+                else
+                {
+                    for (int i = 0; i < 3; i++)
+                        out[i].pos = m_pos + m_vectices[i];
+                }
+
+                queue->Triangle(out[0], out[1], out[2]);
+            }
+
+            ref tex(ivec2 pos)
+            {
+                tex_f(pos);
+                return (ref)*this;
+            }
+            ref tex(ivec2 a, ivec2 b, ivec2 c)
+            {
+                tex_f(a, b, c);
+                return (ref)*this;
+            }
+            ref tex_f(fvec2 pos)
+            {
+                tex_f(pos, pos, pos);
+                return (ref)*this;
+            }
+            ref tex_f(fvec2 a, fvec2 b, fvec2 c)
+            {
+                DebugAssert("2D poly renderer: Triangle texture specified twice.", !has_texture);
+                has_texture = 1;
+
+                m_tex_pos[0] = a;
+                m_tex_pos[1] = b;
+                m_tex_pos[2] = c;
+                return (ref)*this;
+            }
+            ref matrix(fmat3 m) // This can be called multiple times, resulting in multiplying matrices in the order they were passed.
+            {
+                if (has_matrix)
+                    m_matrix = m_matrix /mul/ m;
+                else
+                {
+                    has_matrix = 1;
+                    m_matrix = m;
+                }
+                return (ref)*this;
+            }
+            ref matrix(fmat2 m)
+            {
+                matrix(m.to_mat3());
+                return (ref)*this;
+            }
+            ref rotate(float a) // Uses `matrix()`.
+            {
+                matrix(fmat3::rotate2D(a));
+                return (ref)*this;
+            }
+            ref translate(ivec2 v) // Uses a matrix.
+            {
+                translate_f(v);
+                return (ref)*this;
+            }
+            ref translate_f(fvec2 v) // Uses a matrix.
+            {
+                matrix(fmat3::translate2D(v));
+                return (ref)*this;
+            }
+            ref scale(ivec2 s) // Uses a matrix.
+            {
+                scale_f(s);
+                return (ref)*this;
+            }
+            ref scale(int s) // Uses a matrix.
+            {
+                scale_f(s);
+                return (ref)*this;
+            }
+            ref scale_f(fvec2 s) // Uses a matrix.
+            {
+                matrix(fmat3::scale(s));
+                return (ref)*this;
+            }
+            ref scale_f(float s) // Uses a matrix.
+            {
+                scale_f(fvec2(s));
+                return (ref)*this;
+            }
+            ref color(fvec3 c)
+            {
+                DebugAssert("2D poly renderer: Triangle color specified twice.", !has_color);
+                has_color = 1;
+
+                for (auto &it : m_colors)
+                    it = c;
+                return (ref)*this;
+            }
+            ref color(fvec3 a, fvec3 b, fvec3 c)
+            {
+                DebugAssert("2D poly renderer: Triangle color specified twice.", !has_color);
+                has_color = 1;
+
+                m_colors[0] = a;
+                m_colors[1] = b;
+                m_colors[2] = c;
+                return (ref)*this;
+            }
+            ref mix(float x) // 0 - fill with color, 1 - use texture
+            {
+                DebugAssert("2D poly renderer: Triangle texture/color factor specified twice.", !has_tex_color_fac);
+                has_tex_color_fac = 1;
+
+                for (auto &it : m_tex_color_factors)
+                    it = x;
+                return (ref)*this;
+            }
+            ref mix(float a, float b, float c)
+            {
+                DebugAssert("2D poly renderer: Triangle texture/color factor specified twice.", !has_tex_color_fac);
+                has_tex_color_fac = 1;
+
+                m_tex_color_factors[0] = a;
+                m_tex_color_factors[1] = b;
+                m_tex_color_factors[2] = c;
+                return (ref)*this;
+            }
+            ref alpha(float a)
+            {
+                for (auto &it : m_alpha)
+                    it = a;
+                return (ref)*this;
+            }
+            ref alpha(float a, float b, float c)
+            {
+                m_alpha[0] = a;
+                m_alpha[1] = b;
+                m_alpha[2] = c;
+                return (ref)*this;
+            }
+            ref beta(float a) // 1 - normal blending, 0 - additive blending
+            {
+                for (auto &it : m_beta)
+                    it = a;
+                return (ref)*this;
+            }
+            ref beta(float a, float b, float c)
+            {
+                m_beta[0] = a;
+                m_beta[1] = b;
+                m_beta[2] = c;
                 return (ref)*this;
             }
         };
@@ -642,6 +862,14 @@ void main()
         Quad_t Quad_f(fvec2 pos, fvec2 size)
         {
             return {&queue, pos, size};
+        }
+        Triangle_t Triangle(ivec2 pos, ivec2 a, ivec2 b, ivec2 c)
+        {
+            return {&queue, pos, a, b, c};
+        }
+        Triangle_t Triangle_f(fvec2 pos, fvec2 a, fvec2 b, fvec2 c)
+        {
+            return {&queue, pos, a, b, c};
         }
         Text_t Text(ivec2 pos, std::string_view str)
         {
