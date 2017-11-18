@@ -1000,7 +1000,6 @@ namespace Graphics
             binding = *buffer;
             glBindBuffer(GL_ARRAY_BUFFER, binding);
             draw_binding = 0;
-            return;
         }
         static void UnbindStorage() // Removes draw binding.
         {
@@ -1078,6 +1077,139 @@ namespace Graphics
         ~VertexBuffer()
         {
             Destroy(); // We need to call this to unbind if necessary.
+        }
+    };
+
+    template <typename T> class IndexBuffer
+    {
+        inline static GLuint binding = 0;
+
+        static_assert(std::is_same_v<T, unsigned char> || std::is_same_v<T, unsigned short> || (std::is_same_v<T, unsigned int> && !IsOnMobile), "Invalid type.");
+        inline static constexpr GLint type_enum = (std::is_same_v<T, unsigned char>  ? GL_UNSIGNED_BYTE  :
+                                                   std::is_same_v<T, unsigned short> ? GL_UNSIGNED_SHORT :
+                                                                                       GL_UNSIGNED_INT);
+
+        Buffer buffer;
+        int size = 0;
+
+      public:
+        IndexBuffer() {}
+        IndexBuffer(IndexBuffer &&) = default;
+        IndexBuffer &operator=(IndexBuffer &&) = default;
+
+        IndexBuffer(decltype(nullptr)) : buffer(nullptr) {}
+        IndexBuffer(int count, const T *data = 0, Usage usage = static_draw) : buffer(nullptr)
+        {
+            if (count)
+                SetData(count, data, usage);
+        }
+
+        void Create()
+        {
+            buffer.create();
+            size = 0;
+        }
+        void Destroy()
+        {
+            if (*buffer)
+            {
+                if (binding == *buffer)
+                    binding = 0; // GL unbinds a buffer when it's deleted.
+                buffer.destroy();
+            }
+        }
+        bool Exists() const
+        {
+            return *buffer != 0;
+        }
+
+        int Size() const {return size;}
+        int ByteSize() const {return size * sizeof(T);}
+
+        void Bind() const // Removes draw binding.
+        {
+            DebugAssert("Attempt to bind a null buffer.", *buffer);
+            if (binding == *buffer)
+                return;
+            binding = *buffer;
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, binding);
+        }
+        static void Unbind() // Removes draw binding.
+        {
+            // I don't want to check old binding here.
+            binding = 0;
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        }
+
+        void Draw(Primitive p, int from, int count) // Binds for drawing.
+        {
+            Bind();
+            glDrawElements(p, count, type_enum, from * sizeof(T));
+        }
+        void Draw(Primitive p, int count) // Binds for drawing.
+        {
+            Draw(p, 0, count);
+        }
+        void Draw(Primitive p) // Binds for drawing.
+        {
+            Draw(p, 0, Size());
+        }
+
+
+        void SetData(int count, const T *data = 0, Usage usage = static_draw) // Binds storage.
+        {
+            Bind();
+            size = count;
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * max(1u, sizeof(T)), data, usage);
+        }
+        void SetDataPart(int obj_offset, int count, const T *data) // Binds storage.
+        {
+            SetDataPartBytes(obj_offset * sizeof(T), count * max(1u, sizeof(T)), (const char *)data);
+        }
+        void SetDataPartBytes(int offset, int bytes, const char *data) // Binds storage.
+        {
+            Bind();
+            glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, offset, bytes, data);
+        }
+    };
+
+    template <typename V, typename I> class VertexIndexBuffer
+    {
+      public:
+        VertexBuffer<V> vertices;
+        IndexBuffer<V> indices;
+
+        VertexIndexBuffer() {}
+        VertexIndexBuffer(VertexIndexBuffer &&) = default;
+        VertexIndexBuffer &operator=(VertexIndexBuffer &&) = default;
+
+        VertexIndexBuffer(decltype(nullptr)) : vertices(nullptr), indices(nullptr) {}
+        VertexIndexBuffer(VertexBuffer<V> &&v, IndexBuffer<I> &&i) : vertices(std::move(v)), indices(std::move(i)) {}
+
+        void DrawVertices(Primitive p, int from, int count)
+        {
+            vertices.Draw(p, from, count);
+        }
+        void DrawVertices(Primitive p, int count)
+        {
+            vertices.Draw(p, count);
+        }
+        void DrawVertices(Primitive p)
+        {
+            vertices.Draw(p);
+        }
+
+        void Draw(Primitive p, int from, int count)
+        {
+            indices.Draw(p, from, count);
+        }
+        void Draw(Primitive p, int count)
+        {
+            indices.Draw(p, count);
+        }
+        void Draw(Primitive p)
+        {
+            indices.Draw(p);
         }
     };
 

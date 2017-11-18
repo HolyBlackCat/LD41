@@ -437,7 +437,7 @@ namespace Utils
     template <typename T> using ViewContiguousRange = Range<const T, contiguous>;
 
 
-    DefineExceptionInline(cant_read_file, "Unable to read from file.",
+    DefineExceptionInline(cant_read_file, "Unable to open/read from file.",
         (std::string,name,"File name")
     )
 

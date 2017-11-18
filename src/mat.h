@@ -1,7 +1,7 @@
 #ifndef MAT_H_INCLUDED
 #define MAT_H_INCLUDED
 
-// Version 2.5.2 by HolyBlackCat
+// Version 2.5.3 by HolyBlackCat
 
 #include <algorithm>
 #include <cctype>
@@ -2102,11 +2102,16 @@ namespace Math
                     return mul(in.to_vec3).to_vec4(in.w);
             }
 
-            [[nodiscard]] constexpr mat3<T> matrix() const // The quaternion must be normalized! Complexity: 18x`*` 12x`+-` (+ multiplication 9x`*` 6x`+-`)
+            [[nodiscard]] constexpr mat3<T> make_mat3() const // The quaternion must be normalized! Complexity: 18x`*` 12x`+-` (+ multiplication 9x`*` 6x`+-`)
             {
                 return {1 - 2*vec.y*vec.y - 2*vec.z*vec.z, 2*vec.x*vec.y - 2*vec.z*vec.w, 2*vec.x*vec.z + 2*vec.y*vec.w,
                         2*vec.x*vec.y + 2*vec.z*vec.w, 2*vec.y*vec.z - 2*vec.x*vec.w, 1 - 2*vec.x*vec.x - 2*vec.z*vec.z,
                         2*vec.x*vec.z - 2*vec.y*vec.w, 2*vec.y*vec.z + 2*vec.x*vec.w, 1 - 2*vec.x*vec.x - 2*vec.y*vec.y};
+            }
+
+            [[nodiscard]] constexpr mat4<T> make_mat4() const // The quaternion must be normalized! Complexity: 18x`*` 12x`+-` (+ multiplication 9x`*` 6x`+-`)
+            {
+                return make_mat3().to_mat4();
             }
         };
 

@@ -8,14 +8,18 @@
 
 #ifdef PLATFORM_PC
 #  define OnPC(...) __VA_ARGS__
+#  define IsOnPC 1
 #else
 #  define OnPC(...)
+#  define IsOnPC 0
 #endif
 
 #ifdef PLATFORM_MOBILE
 #  define OnMobile(...) __VA_ARGS__
+#  define IsOnMobile 1
 #else
 #  define OnMobile(...)
+#  define IsOnMobile 0
 #endif
 
 #endif

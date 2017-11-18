@@ -79,6 +79,7 @@
 		<Unit filename="src/events.h" />
 		<Unit filename="src/everything.h">
 			<Option compile="1" />
+			<Option weight="25" />
 		</Unit>
 		<Unit filename="src/exceptions.h" />
 		<Unit filename="src/graphics.cpp">
