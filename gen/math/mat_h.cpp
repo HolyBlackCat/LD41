@@ -6,7 +6,7 @@
 #include <sstream>
 
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
-#define VERSION "2.5.3"
+#define VERSION "2.5.5"
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
 
 std::ofstream out_file("mat.h");
@@ -655,7 +655,7 @@ using type = T;
             {
               case 4:
                 r R"(
-[[nodiscard]] constexpr mat4<T> inverse() const
+[[nodiscard]] mat4<T> inverse() const
 {
 mat4<T> inv;
 inv.x.x = y.y * z.z * w.w -
@@ -764,7 +764,7 @@ return inv * det;
                 break;
               case 3:
                 r R"(
-[[nodiscard]] constexpr mat3<T> inverse() const
+[[nodiscard]] mat3<T> inverse() const
 {
 mat3<T> inv;
 inv.x.x = y.y * z.z -
@@ -795,7 +795,7 @@ return inv * det;
                 break;
               case 2:
                 r R"(
-[[nodiscard]] constexpr mat2<T> inverse() const
+[[nodiscard]] mat2<T> inverse() const
 {
 mat2<T> inv;
 inv.x.x =  y.y;
@@ -1627,15 +1627,15 @@ constexpr float       f_pi  = pi<float>();
 constexpr double      d_pi  = pi<double>();
 constexpr long double ld_pi = pi<long double>();
 
-template <typename T> [[nodiscard]] T to_rad(T in)
+template <typename T> [[nodiscard]] floating_point_t<T> to_rad(T in)
 {
-static_assert(!std::is_integral_v<T>, "Integral argument makes no sense for this function.");
-return in * pi<T>() / (T)180;
+using T_fp = floating_point_t<T>;
+return in * pi<T_fp>() / (T_fp)180;
 }
-template <typename T> [[nodiscard]] T to_deg(T in)
+template <typename T> [[nodiscard]] floating_point_t<T> to_deg(T in)
 {
-static_assert(!std::is_integral_v<T>, "Integral argument makes no sense for this function.");
-return in * (T)180 / pi<T>();
+using T_fp = floating_point_t<T>;
+return in * (T_fp)180 / pi<T_fp>();
 }
 
 template <typename T, typename TT> [[nodiscard]] constexpr T ipow(T a, TT b)

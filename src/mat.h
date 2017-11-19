@@ -1,7 +1,7 @@
 #ifndef MAT_H_INCLUDED
 #define MAT_H_INCLUDED
 
-// Version 2.5.3 by HolyBlackCat
+// Version 2.5.5 by HolyBlackCat
 
 #include <algorithm>
 #include <cctype>
@@ -766,7 +766,7 @@ namespace Math
             [[nodiscard]] constexpr bool all() const {return x.x && y.x && x.y && y.y;}
             [[nodiscard]] constexpr T min() const {return std::min({x.x,x.y,y.x,y.y});}
             [[nodiscard]] constexpr T max() const {return std::max({x.x,x.y,y.x,y.y});}
-            [[nodiscard]] constexpr mat2<T> inverse() const
+            [[nodiscard]] mat2<T> inverse() const
             {
                 mat2<T> inv;
                 inv.x.x =  y.y;
@@ -1145,7 +1145,7 @@ namespace Math
             [[nodiscard]] constexpr bool all() const {return x.x && y.x && z.x && x.y && y.y && z.y && x.z && y.z && z.z;}
             [[nodiscard]] constexpr T min() const {return std::min({x.x,x.y,x.z,y.x,y.y,y.z,z.x,z.y,z.z});}
             [[nodiscard]] constexpr T max() const {return std::max({x.x,x.y,x.z,y.x,y.y,y.z,z.x,z.y,z.z});}
-            [[nodiscard]] constexpr mat3<T> inverse() const
+            [[nodiscard]] mat3<T> inverse() const
             {
                 mat3<T> inv;
                 inv.x.x = y.y * z.z -
@@ -1598,7 +1598,7 @@ namespace Math
             [[nodiscard]] constexpr bool all() const {return x.x && y.x && z.x && w.x && x.y && y.y && z.y && w.y && x.z && y.z && z.z && w.z && x.w && y.w && z.w && w.w;}
             [[nodiscard]] constexpr T min() const {return std::min({x.x,x.y,x.z,x.w,y.x,y.y,y.z,y.w,z.x,z.y,z.z,z.w,w.x,w.y,w.z,w.w});}
             [[nodiscard]] constexpr T max() const {return std::max({x.x,x.y,x.z,x.w,y.x,y.y,y.z,y.w,z.x,z.y,z.z,z.w,w.x,w.y,w.z,w.w});}
-            [[nodiscard]] constexpr mat4<T> inverse() const
+            [[nodiscard]] mat4<T> inverse() const
             {
                 mat4<T> inv;
                 inv.x.x = y.y * z.z * w.w -
@@ -2168,15 +2168,15 @@ namespace Math
         constexpr double      d_pi  = pi<double>();
         constexpr long double ld_pi = pi<long double>();
 
-        template <typename T> [[nodiscard]] T to_rad(T in)
+        template <typename T> [[nodiscard]] floating_point_t<T> to_rad(T in)
         {
-            static_assert(!std::is_integral_v<T>, "Integral argument makes no sense for this function.");
-            return in * pi<T>() / (T)180;
+            using T_fp = floating_point_t<T>;
+            return in * pi<T_fp>() / (T_fp)180;
         }
-        template <typename T> [[nodiscard]] T to_deg(T in)
+        template <typename T> [[nodiscard]] floating_point_t<T> to_deg(T in)
         {
-            static_assert(!std::is_integral_v<T>, "Integral argument makes no sense for this function.");
-            return in * (T)180 / pi<T>();
+            using T_fp = floating_point_t<T>;
+            return in * (T_fp)180 / pi<T_fp>();
         }
 
         template <typename T, typename TT> [[nodiscard]] constexpr T ipow(T a, TT b)

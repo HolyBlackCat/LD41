@@ -130,7 +130,7 @@ namespace Graphics
             depth   = GL_DEPTH_BUFFER_BIT,
             stencil = GL_STENCIL_BUFFER_BIT,
         };
-        inline ClearBits operator|(ClearBits a, ClearBits b) {return ClearBits(a | b);}
+        inline ClearBits operator|(ClearBits a, ClearBits b) {return ClearBits(int(a) | int(b));}
 
         inline void Clear(ClearBits bits)
         {
@@ -190,6 +190,11 @@ namespace Graphics
             inline void FuncNormalSimple  () {Func(src_a, one_minus_src_a);} // Resulting alpha is incorrect.
             inline void FuncNormalRawToPre() {Func(src_a, one_minus_src_a, one, one_minus_src_a);} // Output is premultiplied.
             inline void FuncNormalPre     () {Func(one, one_minus_src_a);} // Source and and output are premultiplited
+        }
+
+        inline void Depth(bool enable)
+        {
+            (enable ? glEnable : glDisable)(GL_DEPTH_TEST);
         }
     }
 
@@ -1084,9 +1089,9 @@ namespace Graphics
     {
         inline static GLuint binding = 0;
 
-        static_assert(std::is_same_v<T, unsigned char> || std::is_same_v<T, unsigned short> || (std::is_same_v<T, unsigned int> && !IsOnMobile), "Invalid type.");
-        inline static constexpr GLint type_enum = (std::is_same_v<T, unsigned char>  ? GL_UNSIGNED_BYTE  :
-                                                   std::is_same_v<T, unsigned short> ? GL_UNSIGNED_SHORT :
+        static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || (std::is_same_v<T, uint32_t> && !IsOnMobile), "Invalid type.");
+        inline static constexpr GLint type_enum = (std::is_same_v<T, uint8_t>  ? GL_UNSIGNED_BYTE  :
+                                                   std::is_same_v<T, uint16_t> ? GL_UNSIGNED_SHORT :
                                                                                        GL_UNSIGNED_INT);
 
         Buffer buffer;
@@ -1177,7 +1182,7 @@ namespace Graphics
     {
       public:
         VertexBuffer<V> vertices;
-        IndexBuffer<V> indices;
+        IndexBuffer<I> indices;
 
         VertexIndexBuffer() {}
         VertexIndexBuffer(VertexIndexBuffer &&) = default;
