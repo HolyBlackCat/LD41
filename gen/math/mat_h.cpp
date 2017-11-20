@@ -6,7 +6,7 @@
 #include <sstream>
 
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
-#define VERSION "2.5.5"
+#define VERSION "2.5.6"
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
 
 std::ofstream out_file("mat.h");
@@ -1575,7 +1575,7 @@ template <typename TT> [[nodiscard]] constexpr vec4<larger_type_t<T,TT>> mul(con
 [[nodiscard]] constexpr mat3<T> make_mat3() const // The quaternion must be normalized! Complexity: 18x`*` 12x`+-` (+ multiplication 9x`*` 6x`+-`)
 {
 return {1 - 2*vec.y*vec.y - 2*vec.z*vec.z, 2*vec.x*vec.y - 2*vec.z*vec.w, 2*vec.x*vec.z + 2*vec.y*vec.w,
-$       2*vec.x*vec.y + 2*vec.z*vec.w, 2*vec.y*vec.z - 2*vec.x*vec.w, 1 - 2*vec.x*vec.x - 2*vec.z*vec.z,
+$       2*vec.x*vec.y + 2*vec.z*vec.w, 1 - 2*vec.x*vec.x - 2*vec.z*vec.z, 2*vec.y*vec.z - 2*vec.x*vec.w,
 $       2*vec.x*vec.z - 2*vec.y*vec.w, 2*vec.y*vec.z + 2*vec.x*vec.w, 1 - 2*vec.x*vec.x - 2*vec.y*vec.y};
 }
 
