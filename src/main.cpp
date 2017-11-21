@@ -5,13 +5,13 @@
 
 Input::Mouse mouse;
 
-ReflectStruct(Attributes, (
+ReflectStruct(AttributesMain, (
     (fvec3)(pos),
     (fvec3)(normal),
     (float)(material),
 ))
 
-ReflectStruct(Uniforms, (
+ReflectStruct(UniformsMain, (
     (Graphics::Shader::VertexUniform<fmat4>)(projection,view,model),
     (Graphics::Shader::VertexUniform<fmat3>)(normal),
     (Graphics::Shader::VertexUniform<float>)(material_count),
@@ -21,7 +21,15 @@ ReflectStruct(Uniforms, (
     (Graphics::Shader::FragmentUniform<fvec3>)(background),
 ))
 
-Graphics::VertexBuffer<Attributes> LoadModel(Utils::MemoryFile file)
+ReflectStruct(AttributesTex, (
+    (fvec2)(pos),
+))
+
+ReflectStruct(UniformsTex, (
+    (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
+))
+
+Graphics::VertexBuffer<AttributesMain> LoadModel(Utils::MemoryFile file)
 {
     std::string_view view((const char *)file.Data(), file.Size());
     std::istringstream ss;
@@ -120,32 +128,37 @@ Graphics::VertexBuffer<Attributes> LoadModel(Utils::MemoryFile file)
     }
     while (next_line_start != view.npos);
 
-    std::vector<Attributes> attribs;
+    std::vector<AttributesMain> attribs;
     attribs.reserve(indices.size());
     for (const auto &it : indices)
     {
-        Attributes a;
+        AttributesMain a;
         a.pos = vertices[it.vertex];
         a.normal = normals[it.normal];
         a.material = it.material;
         attribs.push_back(a);
     }
 
-    return Graphics::VertexBuffer<Attributes>(attribs.size(), attribs.data());
+    return Graphics::VertexBuffer<AttributesMain>(attribs.size(), attribs.data());
 }
 
 Window win;
-Graphics::Shader sh;
+Graphics::Shader shader_main;
+Graphics::Shader shader_identity;
 Graphics::Texture tex_materials;
 Graphics::Texture tex_lookup;
-Uniforms uniforms;
+Graphics::Texture tex_framebuffer_hdr;
+Graphics::Texture tex_framebuffer_hdr_depth;
+Graphics::FrameBuffer framebuffer_hdr;
 
-void Init()
+UniformsMain uniforms_main;
+UniformsTex uniforms_identity;
+
+namespace ShaderSource
 {
-    win.Create("Woah", {800,600});
-
-    sh.Create<Attributes>(
-R"(
+    inline namespace Main
+    {
+        constexpr const char *main_v = R"(
 VARYING(vec3, pos)
 VARYING(vec3, normal)
 VARYING(float, material)
@@ -156,9 +169,8 @@ void main()
     gl_Position = u_projection * u_view * v;
     v_normal = u_normal * a_normal;
     v_material = (a_material + 0.5) / u_material_count;
-}
-)",
-R"(
+})";
+        constexpr const char *main_f = R"(
 VARYING(vec3, pos)
 VARYING(vec3, normal)
 VARYING(float, material)
@@ -276,20 +288,58 @@ void main()
     color = pow(color, vec3(1.0/2.2));
 
     gl_FragColor = vec4(color, 1.0);
+})";
+    }
+    inline namespace Identity
+    {
+        constexpr const char *identity_v = R"(
+VARYING(vec2, pos)
+void main()
+{
+    v_pos = a_pos;
+    gl_Position = vec4(a_pos * 2. - 1., 0, 1);
+})";
+        constexpr const char *identity_f = R"(
+VARYING(vec2, pos)
+void main()
+{
+    gl_FragColor = texture2D(u_texture, v_pos);
+})";
+    }
 }
-)", &uniforms);
 
-    uniforms.projection = fmat4::perspective(to_rad(85), win.Size().ratio(), 0.1, 100);
+void FullscreenQuad()
+{
+    static Graphics::VertexBuffer<AttributesTex> vbuf;
+    static bool first = 1;
+    if (first)
+    {
+        first = 0;
+        vbuf.Create();
+        AttributesTex arr[]{{{-1,-1}},{{-1,10}},{{10,-1}}};
+        vbuf.SetData(3, arr);
+    }
+    vbuf.Draw(Graphics::triangles);
+}
+
+void Init()
+{
+    win.Create("Woah", {800,600});
+
+    shader_main.Create<AttributesMain>(ShaderSource::main_v, ShaderSource::main_f, &uniforms_main);
+    shader_identity.Create<AttributesTex>(ShaderSource::identity_v, ShaderSource::identity_f, &uniforms_identity);
+
+    uniforms_main.projection = fmat4::perspective(to_rad(85), win.Size().ratio(), 0.1, 100);
     fmat4 view = fmat4::look_at({0,0,5},{0,0,0},{0,1,0});
-    uniforms.view = view;
-    uniforms.model = fmat4::identity();
-    uniforms.normal = fmat3::identity();
-    uniforms.camera = {0,0,5};
+    uniforms_main.view = view;
+    uniforms_main.model = fmat4::identity();
+    uniforms_main.normal = fmat3::identity();
+    uniforms_main.camera = {0,0,5};
     fvec3 back = fvec3(127,209,255)/255;
     back.x = std::pow(back.x, 2.2);
     back.y = std::pow(back.y, 2.2);
     back.z = std::pow(back.z, 2.2);
-    uniforms.background = back;
+    uniforms_main.background = back;
 
     { // Load materials
         auto mat_img_raw = Graphics::Image::File("assets/materials.png");
@@ -313,20 +363,31 @@ void main()
         tex_materials.Interpolation(Graphics::Texture::nearest);
         tex_materials.SetData(mat_img);
 
-        uniforms.materials = tex_materials;
-        uniforms.material_count = mat_img.Size().x;
+        uniforms_main.materials = tex_materials;
+        uniforms_main.material_count = mat_img.Size().x;
     }
 
     tex_lookup.Create();
     tex_lookup.Interpolation(Graphics::Texture::linear);
     tex_lookup.Wrap(Graphics::Texture::clamp);
     tex_lookup.SetData(Graphics::Image::File("assets/lookup.png"));
-    uniforms.lookup = tex_lookup;
+    uniforms_main.lookup = tex_lookup;
+
+    tex_framebuffer_hdr.Create();
+    tex_framebuffer_hdr.SetData(GL_RGB16F, GL_RGB, GL_UNSIGNED_BYTE, win.Size());
+    tex_framebuffer_hdr.Interpolation(Graphics::Texture::linear);
+    tex_framebuffer_hdr_depth.Create();
+    tex_framebuffer_hdr_depth.SetData(GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, win.Size());
+    tex_framebuffer_hdr_depth.Interpolation(Graphics::Texture::linear);
+    framebuffer_hdr.Create();
+    framebuffer_hdr.Attach(tex_framebuffer_hdr);
+    framebuffer_hdr.Attach(tex_framebuffer_hdr_depth,-1);
+    framebuffer_hdr.Unbind();
+
+    uniforms_identity.texture = tex_framebuffer_hdr;
 
     Graphics::Blending::Enable();
     Graphics::Blending::FuncNormalPre();
-
-    Graphics::Depth(1);
 }
 
 [[deprecated("Use this once and then use the prerendered texture.")]]
@@ -432,7 +493,7 @@ int main(int, char **)
 {
     Init();
 
-    Graphics::VertexBuffer<Attributes> buf = LoadModel("assets/untitled.obj");
+    Graphics::VertexBuffer<AttributesMain> buf = LoadModel("assets/untitled_.obj");
 
     fquat q = fquat::around_axis({1,0,0}, f_pi / 6);
 
@@ -445,16 +506,24 @@ int main(int, char **)
         if (Input::Keys::f11.pressed())
             win.ToggleFullscreen();
 
+        Graphics::Depth(1);
         Graphics::CheckErrors();
-        Graphics::Clear(Graphics::color | Graphics::depth);
 
+        shader_main.Bind();
+        framebuffer_hdr.Bind();
+        Graphics::Clear(Graphics::color | Graphics::depth);
         q = q /mul/ fquat::around_axis({0,1,0}, 0.02);
         q.normalize();
         fmat4 m = q.make_mat4();
-        uniforms.model = m;
-        uniforms.normal = m.to_mat3().inverse().transpose();
-
+        uniforms_main.model = m;
+        uniforms_main.normal = m.to_mat3().inverse().transpose();
         buf.Draw(Graphics::triangles);
+        Graphics::Depth(0);
+        shader_identity.Bind();
+        Graphics::FrameBuffer::Unbind();
+        Graphics::Clear(Graphics::color);
+        FullscreenQuad();
+
 
         win.Swap();
     }

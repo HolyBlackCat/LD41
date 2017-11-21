@@ -711,12 +711,12 @@ namespace Graphics
             static void Destroy(GLuint value) {glDeleteTextures(1, &value);}
             static void Error() {throw cant_create_gl_resource("Texture");}
         };
-        using Handle = Utils::Handle<HandleFuncs>;
+        using Handle_t = Utils::Handle<HandleFuncs>;
 
         using SlotAllocator = Utils::ResourceAllocator<int, int>;
         inline static SlotAllocator slot_allocator{64};
 
-        Handle handle;
+        Handle_t handle;
         int slot = SlotAllocator::not_allocated;
 
         ivec2 size{};
@@ -747,6 +747,7 @@ namespace Graphics
         };
 
         Texture() {}
+        Texture(decltype(nullptr)) : handle(Handle_t::params_t{}) {}
         Texture(Texture &&) = default;
         Texture &operator=(Texture &&) = default;
 
@@ -754,6 +755,12 @@ namespace Graphics
         {
             Create();
             SetData(img_size, data);
+            Interpolation(mode);
+        }
+        Texture(InterpMode mode, GLint internal_format, GLint format, GLint type, ivec2 img_size, const unsigned char *data = 0) // Creates and attaches the texture.
+        {
+            Create();
+            SetData(internal_format, format, type, img_size, data);
             Interpolation(mode);
         }
         Texture(const Image &img, InterpMode mode) // Creates and attaches the texture.
@@ -809,12 +816,22 @@ namespace Graphics
         {
             return slot;
         }
+        GLuint Handle() const
+        {
+            return *handle;
+        }
 
         void SetData(ivec2 img_size, const u8vec4 *data = 0) // Attaches the texture.
         {
             Attach();
             size = img_size;
             glTexImage2D(GL_TEXTURE_2D, 0, OnPC(GL_RGBA8) OnMobile(GL_RGBA), size.x, size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        }
+        void SetData(GLint internal_format, GLint format, GLint type, ivec2 img_size, const unsigned char *data = 0) // Attaches the texture.
+        {
+            Attach();
+            size = img_size;
+            glTexImage2D(GL_TEXTURE_2D, 0, internal_format, size.x, size.y, 0, format, type, data);
         }
         void SetData(const Image &img) // Attaches the texture.
         {
@@ -953,12 +970,19 @@ namespace Graphics
         triangles = GL_TRIANGLES,
     };
 
+    class BufferCommon
+    {
+        template <typename T> friend class VertexBuffer;
+        template <typename T> friend class IndexBuffer;
+        inline static GLuint vertex_binding = 0;
+        inline static GLuint vertex_draw_binding = 0;
+        inline static int active_attribute_count = 0;
+        inline static GLuint index_binding = 0;
+    };
+
     template <typename T> class VertexBuffer
     {
         static_assert(Reflection::Interface::field_count<T>() || std::is_void_v<T>, "T must be reflected or be `void`.");
-
-        inline static GLuint binding = 0, draw_binding = 0;
-        inline static int active_attribute_count = 0;
 
         Buffer buffer;
         int size = 0;
@@ -984,8 +1008,8 @@ namespace Graphics
         {
             if (*buffer)
             {
-                if (binding == *buffer)
-                    binding = 0; // GL unbinds a buffer when it's deleted.
+                if (BufferCommon::vertex_binding == *buffer)
+                    BufferCommon::vertex_binding = 0; // GL unbinds a buffer when it's deleted.
                 buffer.destroy();
             }
         }
@@ -1000,26 +1024,26 @@ namespace Graphics
         void BindStorage() const // Removes draw binding.
         {
             DebugAssert("Attempt to bind a null buffer.", *buffer);
-            if (binding == *buffer)
+            if (BufferCommon::vertex_binding == *buffer)
                 return;
-            binding = *buffer;
-            glBindBuffer(GL_ARRAY_BUFFER, binding);
-            draw_binding = 0;
+            BufferCommon::vertex_binding = *buffer;
+            glBindBuffer(GL_ARRAY_BUFFER, BufferCommon::vertex_binding);
+            BufferCommon::vertex_draw_binding = 0;
         }
         static void UnbindStorage() // Removes draw binding.
         {
             // I don't want to check old binding here.
-            binding = 0;
+            BufferCommon::vertex_binding = 0;
             glBindBuffer(GL_ARRAY_BUFFER, 0);
-            draw_binding = 0;
+            BufferCommon::vertex_draw_binding = 0;
         }
         void BindDraw() const // Also does storage binding.
         {
             DebugAssert("Attempt to bind a null buffer.", *buffer);
-            if (draw_binding == *buffer)
+            if (BufferCommon::vertex_draw_binding == *buffer)
                 return;
             BindStorage();
-            draw_binding = *buffer;
+            BufferCommon::vertex_draw_binding = *buffer;
             SetActiveAttributes(Reflection::Interface::field_count<T>());
             int offset = 0, pos = 0;
             TemplateUtils::for_each(std::make_index_sequence<Reflection::Interface::field_count<T>()>{}, [&](auto index)
@@ -1036,7 +1060,7 @@ namespace Graphics
         }
         static void UnbindDraw()
         {
-            draw_binding = 0;
+            BufferCommon::vertex_draw_binding = 0;
         }
 
         void Draw(Primitive p, int from, int count) // Binds for drawing.
@@ -1071,12 +1095,12 @@ namespace Graphics
 
         static void SetActiveAttributes(int count) // Makes sure attributes 0..count-1 are active.
         {
-            if (count == active_attribute_count)
+            if (count == BufferCommon::active_attribute_count)
                 return;
-            if (active_attribute_count < count)
-                do glEnableVertexAttribArray(active_attribute_count++); while (active_attribute_count < count);
-            else if (active_attribute_count > count)
-                do glDisableVertexAttribArray(--active_attribute_count); while (active_attribute_count > count);
+            if (BufferCommon::active_attribute_count < count)
+                do glEnableVertexAttribArray(BufferCommon::active_attribute_count++); while (BufferCommon::active_attribute_count < count);
+            else if (BufferCommon::active_attribute_count > count)
+                do glDisableVertexAttribArray(--BufferCommon::active_attribute_count); while (BufferCommon::active_attribute_count > count);
         }
 
         ~VertexBuffer()
@@ -1087,8 +1111,6 @@ namespace Graphics
 
     template <typename T> class IndexBuffer
     {
-        inline static GLuint binding = 0;
-
         static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || (std::is_same_v<T, uint32_t> && !IsOnMobile), "Invalid type.");
         inline static constexpr GLint type_enum = (std::is_same_v<T, uint8_t>  ? GL_UNSIGNED_BYTE  :
                                                    std::is_same_v<T, uint16_t> ? GL_UNSIGNED_SHORT :
@@ -1118,8 +1140,8 @@ namespace Graphics
         {
             if (*buffer)
             {
-                if (binding == *buffer)
-                    binding = 0; // GL unbinds a buffer when it's deleted.
+                if (BufferCommon::index_binding == *buffer)
+                    BufferCommon::index_binding = 0; // GL unbinds a buffer when it's deleted.
                 buffer.destroy();
             }
         }
@@ -1131,19 +1153,23 @@ namespace Graphics
         int Size() const {return size;}
         int ByteSize() const {return size * sizeof(T);}
 
-        void Bind() const // Removes draw binding.
+        void Bind() const
         {
             DebugAssert("Attempt to bind a null buffer.", *buffer);
-            if (binding == *buffer)
+            if (BufferCommon::index_binding == *buffer)
                 return;
-            binding = *buffer;
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, binding);
+            BufferCommon::index_binding = *buffer;
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BufferCommon::index_binding);
         }
-        static void Unbind() // Removes draw binding.
+        static void Unbind()
         {
             // I don't want to check old binding here.
-            binding = 0;
+            BufferCommon::index_binding = 0;
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        }
+        bool Bound() const
+        {
+            return BufferCommon::index_binding == *buffer;
         }
 
         void Draw(Primitive p, int from, int count) // Binds for drawing.
@@ -1206,14 +1232,17 @@ namespace Graphics
 
         void Draw(Primitive p, int from, int count)
         {
+            vertices.BindDraw();
             indices.Draw(p, from, count);
         }
         void Draw(Primitive p, int count)
         {
+            vertices.BindDraw();
             indices.Draw(p, count);
         }
         void Draw(Primitive p)
         {
+            vertices.BindDraw();
             indices.Draw(p);
         }
     };
@@ -1555,6 +1584,11 @@ namespace Graphics
             binding = 0;
             glUseProgram(0);
         }
+        bool Bound() const
+        {
+            return binding == program.handle();
+        }
+
         GLint GetUniformLocation(const std::string &name) const
         {
             return glGetUniformLocation(program.handle(), name.c_str());
@@ -1562,6 +1596,141 @@ namespace Graphics
         ~Shader()
         {
             Destroy(); // We need to call this to unbind if necessary.
+        }
+    };
+
+    class RenderBuffer
+    {
+        struct HandleFuncs
+        {
+            template <typename> friend class ::Utils::Handle;
+            static GLuint Create() {GLuint value; glGenRenderbuffers(1, &value); return value;}
+            static void Destroy(GLuint value) {glDeleteRenderbuffers(1, &value);}
+            static void Error() {throw cant_create_gl_resource("Renderbuffer");}
+        };
+        using Handle_t = Utils::Handle<HandleFuncs>;
+
+        Handle_t handle;
+
+        inline static GLuint binding = 0;
+
+      public:
+        RenderBuffer() {}
+        RenderBuffer(decltype(nullptr)) : handle(Handle_t::params_t{}) {}
+        RenderBuffer(RenderBuffer &&) = default;
+        RenderBuffer &operator=(RenderBuffer &&) = default;
+
+        void Create()
+        {
+            handle.create({});
+        }
+        void Destroy()
+        {
+            handle.destroy();
+        }
+        bool Exists() const
+        {
+            return bool(handle);
+        }
+
+        GLuint Handle() const
+        {
+            return *handle;
+        }
+
+        void Bind() const
+        {
+            DebugAssert("Attempt to bind a null renderbuffer.", *handle);
+            if (binding == *handle)
+                return;
+            binding = *handle;
+            glBindRenderbuffer(GL_RENDERBUFFER, *handle);
+        }
+        static void Unbind()
+        {
+            if (binding == 0)
+                return;
+            binding = 0;
+            glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        }
+
+    };
+
+    class FrameBuffer
+    {
+        struct HandleFuncs
+        {
+            template <typename> friend class ::Utils::Handle;
+            static GLuint Create() {GLuint value; glGenFramebuffers(1, &value); return value;}
+            static void Destroy(GLuint value) {glDeleteFramebuffers(1, &value);}
+            static void Error() {throw cant_create_gl_resource("Framebuffer");}
+        };
+        using Handle = Utils::Handle<HandleFuncs>;
+
+        Handle handle;
+
+        inline static GLuint binding = 0;
+
+        struct Attachment
+        {
+            GLuint type, handle;
+
+            Attachment(const Texture &tex)
+            {
+                handle = tex.Handle();
+                type = GL_TEXTURE_2D;
+            }
+            Attachment(const RenderBuffer &rb)
+            {
+                handle = rb.Handle();
+                type = GL_RENDERBUFFER;
+            }
+        };
+
+      public:
+        FrameBuffer() {}
+        FrameBuffer(decltype(nullptr)) : handle(Handle::params_t{}) {}
+        FrameBuffer(FrameBuffer &&) = default;
+        FrameBuffer &operator=(FrameBuffer &&) = default;
+
+        void Create()
+        {
+            handle.create({});
+        }
+        void Destroy()
+        {
+            handle.destroy();
+        }
+        bool Exists() const
+        {
+            return bool(handle);
+        }
+
+        void Bind() const
+        {
+            DebugAssert("Attempt to bind a null framebuffer.", *handle);
+            if (binding == *handle)
+                return;
+            binding = *handle;
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, *handle);
+        }
+        static void Unbind()
+        {
+            if (binding == 0)
+                return;
+            binding = 0;
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        }
+        bool Bound() const
+        {
+            return binding == *handle;
+        }
+
+        void Attach(Attachment att, int slot = 0) // Binds the framebuffer. `slot == -1` is for depth buffer.
+        {
+            Bind();
+            GLint slot_enum = (slot >= 0 ? GL_COLOR_ATTACHMENT0 + slot : GL_DEPTH_ATTACHMENT);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, slot_enum, att.type, att.handle, 0);
         }
     };
 }
