@@ -17,6 +17,8 @@ ReflectStruct(Uniforms, (
     (Graphics::Shader::VertexUniform<float>)(material_count),
     (Graphics::Shader::FragmentUniform<fvec3>)(camera),
     (Graphics::Shader::FragmentUniform<Graphics::Texture>)(materials),
+    (Graphics::Shader::FragmentUniform<Graphics::Texture>)(lookup),
+    (Graphics::Shader::FragmentUniform<fvec3>)(background),
 ))
 
 Graphics::VertexBuffer<Attributes> LoadModel(Utils::MemoryFile file)
@@ -135,6 +137,7 @@ Graphics::VertexBuffer<Attributes> LoadModel(Utils::MemoryFile file)
 Window win;
 Graphics::Shader sh;
 Graphics::Texture tex_materials;
+Graphics::Texture tex_lookup;
 Uniforms uniforms;
 
 void Init()
@@ -220,8 +223,10 @@ void main()
     // reflectance equation
     vec3 Lo = vec3(0.0);
 
+    if (1==1)
+    {
             vec3 light_pos = vec3(5,0,5);
-            vec3 light_color = vec3(1,0.9,0.8)*5.0;
+            vec3 light_color = vec3(1,0.9,0.8)*500.0;
 
         // calculate per-light radiance
         vec3 L = normalize(light_pos - v_pos);
@@ -246,11 +251,26 @@ void main()
         // add to outgoing radiance Lo
         float NdotL = max(dot(N, L), 0.0);
         Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+    }
 
-    vec3 color;
+    // ambient lighting (we now use IBL as the ambient term)
+    vec3 F = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
 
-    vec3 ambient = vec3(0.0003) * albedo * ao;
-    color = ambient + Lo;
+    vec3 kS = F;
+    vec3 kD = 1.0 - kS;
+    kD *= 1.0 - metallic;
+
+    vec3 irradiance = u_background;
+    vec3 diffuse      = irradiance * albedo;
+
+    // sample both the pre-filter map and the BRDF lut and combine them together as per the Split-Sum approximation to get the IBL specular part.
+    vec3 prefilteredColor = u_background; // for reflections
+    vec2 brdf = texture2D(u_lookup, vec2(max(dot(N, V), 0.0), roughness)).rg;
+    vec3 specular = prefilteredColor * (F * brdf.x + brdf.y);
+
+    vec3 ambient = (kD * diffuse + specular) * ao;
+
+    vec3 color = ambient + Lo;
 
     color = color / (color + vec3(1.0));
     color = pow(color, vec3(1.0/2.2));
@@ -265,6 +285,11 @@ void main()
     uniforms.model = fmat4::identity();
     uniforms.normal = fmat3::identity();
     uniforms.camera = {0,0,5};
+    fvec3 back = fvec3(127,209,255)/255;
+    back.x = std::pow(back.x, 2.2);
+    back.y = std::pow(back.y, 2.2);
+    back.z = std::pow(back.z, 2.2);
+    uniforms.background = back;
 
     { // Load materials
         auto mat_img_raw = Graphics::Image::File("assets/materials.png");
@@ -291,6 +316,12 @@ void main()
         uniforms.materials = tex_materials;
         uniforms.material_count = mat_img.Size().x;
     }
+
+    tex_lookup.Create();
+    tex_lookup.Interpolation(Graphics::Texture::linear);
+    tex_lookup.Wrap(Graphics::Texture::clamp);
+    tex_lookup.SetData(Graphics::Image::File("assets/lookup.png"));
+    uniforms.lookup = tex_lookup;
 
     Graphics::Blending::Enable();
     Graphics::Blending::FuncNormalPre();
@@ -401,11 +432,11 @@ int main(int, char **)
 {
     Init();
 
-    Graphics::VertexBuffer<Attributes> buf = LoadModel("assets/untitled_.obj");
+    Graphics::VertexBuffer<Attributes> buf = LoadModel("assets/untitled.obj");
 
     fquat q = fquat::around_axis({1,0,0}, f_pi / 6);
 
-    glClearColor(0.5,0.5,0.5,1);
+    glClearColor(127/255.,209/255.,255/255.,1);
 
     while (1)
     {
