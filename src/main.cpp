@@ -226,7 +226,7 @@ void main()
     if (1==1)
     {
             vec3 light_pos = vec3(5,0,5);
-            vec3 light_color = vec3(1,0.9,0.8)*500.0;
+            vec3 light_color = vec3(1,0.7,0)*500.0;
 
         // calculate per-light radiance
         vec3 L = normalize(light_pos - v_pos);
