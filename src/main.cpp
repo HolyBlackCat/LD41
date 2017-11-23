@@ -25,8 +25,26 @@ ReflectStruct(AttributesTex, (
     (fvec2)(pos),
 ))
 
-ReflectStruct(UniformsTex, (
+ReflectStruct(UniformsExtractBright, (
     (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
+    (Graphics::Shader::FragmentUniform<float>)(exposure),
+    (Graphics::Shader::FragmentUniform<float>)(threshold),
+))
+
+ReflectStruct(UniformsBlur, (
+    (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
+    (Graphics::Shader::FragmentUniform<fvec2>)(step),
+    (Graphics::Shader::FragmentUniform<bool>)(vertical),
+))
+
+ReflectStruct(UniformsIdentity, (
+    (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
+    (Graphics::Shader::FragmentUniform<float>)(factor),
+))
+
+ReflectStruct(UniformsFinal, (
+    (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
+    (Graphics::Shader::FragmentUniform<float>)(exposure),
 ))
 
 Graphics::VertexBuffer<AttributesMain> LoadModel(Utils::MemoryFile file)
@@ -144,15 +162,25 @@ Graphics::VertexBuffer<AttributesMain> LoadModel(Utils::MemoryFile file)
 
 Window win;
 Graphics::Shader shader_main;
+Graphics::Shader shader_extract_bright;
+Graphics::Shader shader_blur;
 Graphics::Shader shader_identity;
+Graphics::Shader shader_final;
 Graphics::Texture tex_materials;
 Graphics::Texture tex_lookup;
 Graphics::Texture tex_framebuffer_hdr;
 Graphics::Texture tex_framebuffer_hdr_depth;
 Graphics::FrameBuffer framebuffer_hdr;
+Graphics::Texture tex_framebuffer_bloom1;
+Graphics::Texture tex_framebuffer_bloom2;
+Graphics::FrameBuffer framebuffer_bloom1;
+Graphics::FrameBuffer framebuffer_bloom2;
 
 UniformsMain uniforms_main;
-UniformsTex uniforms_identity;
+UniformsExtractBright uniforms_extract_bright;
+UniformsBlur uniforms_blur;
+UniformsIdentity uniforms_identity;
+UniformsFinal uniforms_final;
 
 namespace ShaderSource
 {
@@ -238,7 +266,7 @@ void main()
     if (1==1)
     {
             vec3 light_pos = vec3(5,0,5);
-            vec3 light_color = vec3(1,0.7,0)*500.0;
+            vec3 light_color = vec3(1,0.7,0)*500.0*2;
 
         // calculate per-light radiance
         vec3 L = normalize(light_pos - v_pos);
@@ -284,10 +312,66 @@ void main()
 
     vec3 color = ambient + Lo;
 
-    color = color / (color + vec3(1.0));
-    color = pow(color, vec3(1.0/2.2));
-
     gl_FragColor = vec4(color, 1.0);
+})";
+    }
+    inline namespace ExtractBright
+    {
+        constexpr const char *extract_bright_v = R"(
+VARYING(vec2, pos)
+void main()
+{
+    v_pos = a_pos;
+    gl_Position = vec4(a_pos * 2. - 1., 0, 1);
+})";
+        constexpr const char *extract_bright_f = R"(
+VARYING(vec2, pos)
+void main()
+{
+    vec3 color = texture2D(u_texture, v_pos).rgb;
+    color = vec3(1.0) - exp(-color * exp(u_exposure));
+    float b = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    b -= u_threshold;
+    gl_FragColor = vec4(color * b, 0);
+})";
+    }
+    inline namespace Blur
+    {
+        constexpr const char *blur_v = R"(
+VARYING(vec2, pos)
+void main()
+{
+    v_pos = a_pos;
+    gl_Position = vec4(a_pos * 2. - 1., 0, 1);
+})";
+        constexpr const char *blur_f = R"(
+VARYING(vec2, pos)
+#define R 7
+void main()
+{
+    const float c[R] = float[](0.149446, 0.139483, 0.11333, 0.0799976, 0.0488874, 0.0257302, 0.0115786);
+    vec3 color = texture2D(u_texture, v_pos).rgb * c[0];
+    if (u_vertical)
+    {
+        for(int i = 1; i < R; ++i)
+        {
+            float s = u_step.y * i;
+            s *= 3;
+            color += texture(u_texture, v_pos + vec2(0.0, s)).rgb * c[i];
+            color += texture(u_texture, v_pos - vec2(0.0, s)).rgb * c[i];
+        }
+    }
+    else
+    {
+        for(int i = 1; i < R; ++i)
+        {
+            float s = u_step.x * i;
+            s *= 3;
+            color += texture(u_texture, v_pos + vec2(s, 0.0)).rgb * c[i];
+            color += texture(u_texture, v_pos - vec2(s, 0.0)).rgb * c[i];
+        }
+    }
+    gl_FragColor = vec4(color,1);
 })";
     }
     inline namespace Identity
@@ -303,7 +387,28 @@ void main()
 VARYING(vec2, pos)
 void main()
 {
-    gl_FragColor = texture2D(u_texture, v_pos);
+    vec4 c = texture2D(u_texture, v_pos);
+    gl_FragColor = vec4(c.rgb * u_factor, c.a);
+})";
+    }
+    inline namespace Final
+    {
+        constexpr const char *final_v = R"(
+VARYING(vec2, pos)
+void main()
+{
+    v_pos = a_pos;
+    gl_Position = vec4(a_pos * 2. - 1., 0, 1);
+})";
+        constexpr const char *final_f = R"(
+VARYING(vec2, pos)
+void main()
+{
+    vec4 tex_color = texture2D(u_texture, v_pos);
+    vec3 color = tex_color.rgb;
+    color = vec3(1.0) - exp(-color * exp(u_exposure));
+    color = pow(color, vec3(1.0/2.2));
+    gl_FragColor = vec4(color, tex_color.a);
 })";
     }
 }
@@ -327,7 +432,10 @@ void Init()
     win.Create("Woah", {800,600});
 
     shader_main.Create<AttributesMain>(ShaderSource::main_v, ShaderSource::main_f, &uniforms_main);
+    shader_extract_bright.Create<AttributesTex>(ShaderSource::extract_bright_v, ShaderSource::extract_bright_f, &uniforms_extract_bright);
+    shader_blur.Create<AttributesTex>(ShaderSource::blur_v, ShaderSource::blur_f, &uniforms_blur);
     shader_identity.Create<AttributesTex>(ShaderSource::identity_v, ShaderSource::identity_f, &uniforms_identity);
+    shader_final.Create<AttributesTex>(ShaderSource::final_v, ShaderSource::final_f, &uniforms_final);
 
     uniforms_main.projection = fmat4::perspective(to_rad(85), win.Size().ratio(), 0.1, 100);
     fmat4 view = fmat4::look_at({0,0,5},{0,0,0},{0,1,0});
@@ -335,11 +443,8 @@ void Init()
     uniforms_main.model = fmat4::identity();
     uniforms_main.normal = fmat3::identity();
     uniforms_main.camera = {0,0,5};
-    fvec3 back = fvec3(127,209,255)/255;
-    back.x = std::pow(back.x, 2.2);
-    back.y = std::pow(back.y, 2.2);
-    back.z = std::pow(back.z, 2.2);
-    uniforms_main.background = back;
+
+    uniforms_main.background = (fvec3(127,209,255)/255).apply([](float x){return std::pow(x,2.2);});
 
     { // Load materials
         auto mat_img_raw = Graphics::Image::File("assets/materials.png");
@@ -384,10 +489,29 @@ void Init()
     framebuffer_hdr.Attach(tex_framebuffer_hdr_depth,-1);
     framebuffer_hdr.Unbind();
 
-    uniforms_identity.texture = tex_framebuffer_hdr;
+    for (auto it : {&tex_framebuffer_bloom1, &tex_framebuffer_bloom2})
+    {
+        it->Create();
+        it->SetData(GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE, win.Size());
+        it->Interpolation(Graphics::Texture::linear);
+        it->Wrap(Graphics::Texture::clamp);
+    }
+    framebuffer_bloom1.Create();
+    framebuffer_bloom2.Create();
+    framebuffer_bloom1.Attach(tex_framebuffer_bloom1);
+    framebuffer_bloom2.Attach(tex_framebuffer_bloom2);
 
-    Graphics::Blending::Enable();
-    Graphics::Blending::FuncNormalPre();
+    uniforms_extract_bright.texture = tex_framebuffer_hdr;
+    uniforms_extract_bright.exposure = 0;
+    uniforms_extract_bright.threshold = 0.4;
+
+    uniforms_blur.step = 1. / win.Size();
+
+    uniforms_identity.texture = tex_framebuffer_bloom1;
+    uniforms_identity.factor = 1.75;
+
+    uniforms_final.texture = tex_framebuffer_hdr;
+    uniforms_final.exposure = 0;
 }
 
 [[deprecated("Use this once and then use the prerendered texture.")]]
@@ -493,11 +617,11 @@ int main(int, char **)
 {
     Init();
 
-    Graphics::VertexBuffer<AttributesMain> buf = LoadModel("assets/untitled_.obj");
+    Graphics::VertexBuffer<AttributesMain> buf = LoadModel("assets/untitled.obj");
 
     fquat q = fquat::around_axis({1,0,0}, f_pi / 6);
 
-    glClearColor(127/255.,209/255.,255/255.,1);
+    Graphics::SetClearColor((fvec3(127,209,255)/255).apply([](float x){return std::pow(x,2.2);}));
 
     while (1)
     {
@@ -506,24 +630,66 @@ int main(int, char **)
         if (Input::Keys::f11.pressed())
             win.ToggleFullscreen();
 
-        Graphics::Depth(1);
         Graphics::CheckErrors();
 
-        shader_main.Bind();
+        Graphics::Blending::Enable();
+        Graphics::Blending::FuncNormalPre();
+        Graphics::Depth(1);
         framebuffer_hdr.Bind();
+        shader_main.Bind();
+
         Graphics::Clear(Graphics::color | Graphics::depth);
-        q = q /mul/ fquat::around_axis({0,1,0}, 0.02);
+
+        q = q /mul/ fquat::around_axis({0,1,0}, 0.005);
         q.normalize();
         fmat4 m = q.make_mat4();
+
         uniforms_main.model = m;
         uniforms_main.normal = m.to_mat3().inverse().transpose();
         buf.Draw(Graphics::triangles);
+
+        Graphics::Blending::Disable();
+        Graphics::Blending::FuncAdd();
         Graphics::Depth(0);
-        shader_identity.Bind();
-        Graphics::FrameBuffer::Unbind();
-        Graphics::Clear(Graphics::color);
+
+        framebuffer_bloom1.Bind();
+        shader_extract_bright.Bind();
         FullscreenQuad();
 
+        shader_blur.Bind();
+
+        #if 0 // Render bloom only
+        framebuffer_hdr.Bind();
+        Graphics::SetClearColor(fvec3(0));
+        Graphics::Clear(Graphics::color);
+        Graphics::SetClearColor((fvec3(127,209,255)/255).apply([](float x){return std::pow(x,2.2);}));
+        #endif
+
+
+        for (int i = 0; i < 4; i++)
+        {
+            framebuffer_bloom2.Bind();
+            uniforms_blur.vertical = 0;
+            uniforms_blur.texture = tex_framebuffer_bloom1;
+            FullscreenQuad();
+
+            framebuffer_bloom1.Bind();
+            uniforms_blur.vertical = 1;
+            uniforms_blur.texture = tex_framebuffer_bloom2;
+            FullscreenQuad();
+
+            Graphics::Blending::Enable();
+            framebuffer_hdr.Bind();
+            shader_identity.Bind();
+            FullscreenQuad();
+            Graphics::Blending::Disable();
+        }
+
+        Graphics::FrameBuffer::Unbind();
+
+        shader_final.Bind();
+
+        FullscreenQuad();
 
         win.Swap();
     }

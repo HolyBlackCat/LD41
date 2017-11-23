@@ -136,6 +136,14 @@ namespace Graphics
         {
             glClear(bits);
         }
+        inline void SetClearColor(fvec4 c)
+        {
+            glClearColor(c.r, c.g, c.b, c.a);
+        }
+        inline void SetClearColor(fvec3 c)
+        {
+            SetClearColor(c.to_vec4(1));
+        }
 
 
         namespace Blending
@@ -187,6 +195,7 @@ namespace Graphics
             inline void Equation(Equations eq, Equations eqa) {glBlendEquationSeparate(eq, eqa);}
 
             inline void FuncOverwrite     () {Func(one, zero);}
+            inline void FuncAdd           () {Func(one, one);}
             inline void FuncNormalSimple  () {Func(src_a, one_minus_src_a);} // Resulting alpha is incorrect.
             inline void FuncNormalRawToPre() {Func(src_a, one_minus_src_a, one, one_minus_src_a);} // Output is premultiplied.
             inline void FuncNormalPre     () {Func(one, one_minus_src_a);} // Source and and output are premultiplited
@@ -1496,6 +1505,7 @@ namespace Graphics
                 else if constexpr (std::is_same_v<type, fmat4x3     >) glUniformMatrix4x3fv(loc, 1, 0, object.as_array());
                 else if constexpr (std::is_same_v<type, fmat2x4     >) glUniformMatrix2x4fv(loc, 1, 0, object.as_array());
                 else if constexpr (std::is_same_v<type, fmat3x4     >) glUniformMatrix3x4fv(loc, 1, 0, object.as_array());
+                else if constexpr (std::is_same_v<type, bool        >) glUniform1ui(loc, object);
                 else static_assert(std::is_void_v<type>, "Uniforms of this type are not supported.");
                 return object;
             }
