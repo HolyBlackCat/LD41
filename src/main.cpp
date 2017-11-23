@@ -27,7 +27,6 @@ ReflectStruct(AttributesTex, (
 
 ReflectStruct(UniformsExtractBright, (
     (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
-    (Graphics::Shader::FragmentUniform<float>)(exposure),
     (Graphics::Shader::FragmentUniform<float>)(threshold),
 ))
 
@@ -329,7 +328,6 @@ VARYING(vec2, pos)
 void main()
 {
     vec3 color = texture2D(u_texture, v_pos).rgb;
-    color = vec3(1.0) - exp(-color * exp(u_exposure));
     float b = dot(color, vec3(0.2126, 0.7152, 0.0722));
     b -= u_threshold;
     gl_FragColor = vec4(color * b, 0);
@@ -502,13 +500,12 @@ void Init()
     framebuffer_bloom2.Attach(tex_framebuffer_bloom2);
 
     uniforms_extract_bright.texture = tex_framebuffer_hdr;
-    uniforms_extract_bright.exposure = 0;
-    uniforms_extract_bright.threshold = 0.4;
+    uniforms_extract_bright.threshold = 1.1;
 
     uniforms_blur.step = 1. / win.Size();
 
     uniforms_identity.texture = tex_framebuffer_bloom1;
-    uniforms_identity.factor = 1.75;
+    uniforms_identity.factor = 0.5;
 
     uniforms_final.texture = tex_framebuffer_hdr;
     uniforms_final.exposure = 0;
@@ -640,7 +637,7 @@ int main(int, char **)
 
         Graphics::Clear(Graphics::color | Graphics::depth);
 
-        q = q /mul/ fquat::around_axis({0,1,0}, 0.005);
+        q = q /mul/ fquat::around_axis({0,1,0}, 0.01);
         q.normalize();
         fmat4 m = q.make_mat4();
 
