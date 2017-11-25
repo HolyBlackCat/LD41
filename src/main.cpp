@@ -12,7 +12,7 @@ ReflectStruct(AttributesMain, (
 ))
 
 ReflectStruct(UniformsMain, (
-    (Graphics::Shader::VertexUniform<fmat4>)(projection,view,model),
+    (Graphics::Shader::VertexUniform<fmat4>)(projection_view,model),
     (Graphics::Shader::VertexUniform<fmat3>)(normal),
     (Graphics::Shader::VertexUniform<float>)(material_count),
     (Graphics::Shader::FragmentUniform<fvec3>)(camera),
@@ -23,6 +23,13 @@ ReflectStruct(UniformsMain, (
 
 ReflectStruct(AttributesTex, (
     (fvec2)(pos),
+))
+
+ReflectStruct(UniformsAddLight, (
+    (Graphics::Shader::FragmentUniform<Graphics::Texture>)(materials,normal_mat,depth),
+    (Graphics::Shader::FragmentUniform<fmat4>)(inverse_projection_view),
+    (Graphics::Shader::FragmentUniform<fvec3>)(camera),
+    (Graphics::Shader::FragmentUniform<fvec3>)(light_pos,light_color),
 ))
 
 ReflectStruct(UniformsExtractBright, (
@@ -162,6 +169,7 @@ Graphics::VertexBuffer<AttributesMain> LoadModel(Utils::MemoryFile file)
 
 Window win;
 Graphics::Shader shader_main;
+Graphics::Shader shader_add_light;
 Graphics::Shader shader_extract_bright;
 Graphics::Shader shader_blur;
 Graphics::Shader shader_identity;
@@ -169,18 +177,21 @@ Graphics::Shader shader_final;
 Graphics::Texture tex_materials;
 Graphics::Texture tex_lookup;
 Graphics::Texture tex_framebuffer_hdr;
+Graphics::Texture tex_framebuffer_hdr_normal_mat;
 Graphics::Texture tex_framebuffer_hdr_depth;
 Graphics::FrameBuffer framebuffer_hdr;
+Graphics::FrameBuffer framebuffer_hdr_color;
 Graphics::Texture tex_framebuffer_bloom1;
 Graphics::Texture tex_framebuffer_bloom2;
 Graphics::FrameBuffer framebuffer_bloom1;
 Graphics::FrameBuffer framebuffer_bloom2;
 
-UniformsMain uniforms_main;
+UniformsMain          uniforms_main;
+UniformsAddLight      uniforms_add_light;
 UniformsExtractBright uniforms_extract_bright;
-UniformsBlur uniforms_blur;
-UniformsIdentity uniforms_identity;
-UniformsFinal uniforms_final;
+UniformsBlur          uniforms_blur;
+UniformsIdentity      uniforms_identity;
+UniformsFinal         uniforms_final;
 
 namespace ShaderSource
 {
@@ -194,7 +205,7 @@ void main()
 {
     vec4 v = u_model * vec4(a_pos, 1);
     v_pos = v.xyz;
-    gl_Position = u_projection * u_view * v;
+    gl_Position = u_projection_view * v;
     v_normal = u_normal * a_normal;
     v_material = (a_material + 0.5) / u_material_count;
 })";
@@ -249,7 +260,7 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
 void main()
 {
     vec3 albedo = texture2D(u_materials, vec2(v_material, 0.25)).xyz;
-    vec3 stats = texture2D(u_materials, vec2(v_material, 0.75)).xyz;
+    vec3 stats  = texture2D(u_materials, vec2(v_material, 0.75)).xyz;
     float metallic  = stats.x;
     float roughness = stats.y;
     float ao        = stats.z;
@@ -263,7 +274,7 @@ void main()
     // reflectance equation
     vec3 Lo = vec3(0.0);
 
-    if (1==1)
+    if (1==0)
     {
             vec3 light_pos = vec3(5,5,5);
             vec3 light_color = vec3(4,4,10)*50.0;
@@ -312,7 +323,115 @@ void main()
 
     vec3 color = ambient + Lo;
 
-    gl_FragColor = vec4(color, 1.0);
+    gl_FragData[0] = vec4(color, 1.0);
+    gl_FragData[1] = vec4(N / 2. + .5, v_material);
+})";
+    }
+    inline namespace AddLight
+    {
+        constexpr const char *add_light_v = R"(
+VARYING(vec2, pos)
+void main()
+{
+    v_pos = a_pos;
+    gl_Position = vec4(a_pos * 2. - 1., 0, 1);
+})";
+        constexpr const char *add_light_f = R"(
+VARYING(vec2, pos)
+
+const float PI = 3.14159265359;
+
+float DistributionGGX(vec3 N, vec3 H, float roughness)
+{
+    float a      = roughness*roughness;
+    float a2     = a*a;
+    float NdotH  = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH*NdotH;
+
+    float nom   = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+
+    return nom / denom;
+}
+float GeometrySchlickGGX(float NdotV, float roughness)
+{
+    float r = (roughness + 1.0);
+    float k = (r*r) / 8.0;
+
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+
+    return nom / denom;
+}
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
+{
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2  = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1  = GeometrySchlickGGX(NdotL, roughness);
+
+    return ggx1 * ggx2;
+}
+vec3 fresnelSchlick(float cosTheta, vec3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+void main()
+{
+    float depth = texture(u_depth, v_pos).r;
+    if (depth == 1) discard;
+    vec4 normal_mat = texture2D(u_normal_mat, v_pos);
+    vec3 albedo = texture2D(u_materials, vec2(normal_mat.w, 0.25)).xyz;
+    vec3 stats  = texture2D(u_materials, vec2(normal_mat.w, 0.75)).xyz;
+    float metallic  = stats.x;
+    float roughness = stats.y;
+    float ao        = stats.z;
+
+    vec3 N = normal_mat.xyz * 2. - 1.;
+
+    vec4 pos = u_inverse_projection_view * vec4(vec3(v_pos, depth) * 2. - 1., 1);
+    pos.xyz /= pos.w;
+
+    vec3 V = normalize(u_camera - pos.xyz);
+
+    vec3 F0 = vec3(0.04);
+    F0 = mix(F0, albedo, metallic);
+
+    // reflectance equation
+    vec3 Lo = vec3(0.0);
+
+    // calculate per-light radiance
+    vec3 rel_pos = u_light_pos - pos.xyz;
+    float distance    = length(rel_pos);
+    float attenuation = 1.0 / (distance * distance);
+    vec3 radiance     = u_light_color * attenuation;
+    vec3 L = rel_pos / distance;
+    vec3 H = normalize(V + L);
+
+    // cook-torrance brdf
+    float NDF = DistributionGGX(N, H, roughness);
+    float G   = GeometrySmith(N, V, L, roughness);
+    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - metallic;
+
+    vec3 nominator    = NDF * G * F;
+    float denominator = 4 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.001;
+    vec3 specular     = nominator / denominator;
+
+    // add to outgoing radiance Lo
+    float NdotL = max(dot(N, L), 0.0);
+    Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+
+    gl_FragColor = vec4(Lo, 1.0);
 })";
     }
     inline namespace ExtractBright
@@ -410,37 +529,76 @@ void main()
     }
 }
 
-void FullscreenQuad()
+class Render
 {
-    static Graphics::VertexBuffer<AttributesTex> vbuf;
-    static bool first = 1;
-    if (first)
+    ~Render() = delete;
+    inline static fmat4 projection = fmat4::identity(), view = fmat4::identity();
+  public:
+    static void FullscreenQuad()
     {
-        first = 0;
-        vbuf.Create();
-        AttributesTex arr[]{{{-1,-1}},{{-1,10}},{{10,-1}}};
-        vbuf.SetData(3, arr);
+        static Graphics::VertexBuffer<AttributesTex> vbuf;
+        static bool first = 1;
+        if (first)
+        {
+            first = 0;
+            vbuf.Create();
+            AttributesTex arr[]{{{-1,-1}},{{-1,10}},{{10,-1}}};
+            vbuf.SetData(3, arr);
+        }
+        vbuf.Draw(Graphics::triangles);
     }
-    vbuf.Draw(Graphics::triangles);
-}
+
+    static void SetProjection(fmat4 m)
+    {
+        projection = m;
+        fmat4 pv = projection /mul/ view;
+        uniforms_main.projection_view = pv;
+        uniforms_add_light.inverse_projection_view = pv.inverse();
+    }
+    static void SetView(fmat4 m)
+    {
+        view = m;
+        fmat4 pv = projection /mul/ view;
+        fvec3 camera = m.inverse().w.to_vec3();
+        uniforms_main.projection_view = pv;
+        uniforms_main.camera = camera;
+        uniforms_add_light.inverse_projection_view = pv.inverse();
+        uniforms_add_light.camera = camera;
+    }
+    static void SetModel(fmat4 m)
+    {
+        uniforms_main.model = m;
+        uniforms_main.normal = m.to_mat3().inverse().transpose();
+    }
+
+    static void SetBackground(fvec3 c)
+    {
+        uniforms_main.background = c.apply([](float x){return std::pow(x,2.2);});
+    }
+    static void SetBackgroundRaw(fvec3 c)
+    {
+        uniforms_main.background = c;
+    }
+
+    static void Light(fvec3 pos, fvec3 color)
+    {
+        shader_add_light.Bind();
+        uniforms_add_light.light_pos = pos;
+        uniforms_add_light.light_color = color;
+        FullscreenQuad();
+    }
+};
 
 void Init()
 {
     win.Create("Woah", {800,600});
 
-    shader_main.Create<AttributesMain>(ShaderSource::main_v, ShaderSource::main_f, &uniforms_main);
-    shader_extract_bright.Create<AttributesTex>(ShaderSource::extract_bright_v, ShaderSource::extract_bright_f, &uniforms_extract_bright);
-    shader_blur.Create<AttributesTex>(ShaderSource::blur_v, ShaderSource::blur_f, &uniforms_blur);
-    shader_identity.Create<AttributesTex>(ShaderSource::identity_v, ShaderSource::identity_f, &uniforms_identity);
-    shader_final.Create<AttributesTex>(ShaderSource::final_v, ShaderSource::final_f, &uniforms_final);
-
-    uniforms_main.projection = fmat4::perspective(to_rad(85), win.Size().ratio(), 0.1, 100);
-    uniforms_main.view = fmat4::identity();
-    uniforms_main.model = fmat4::identity();
-    uniforms_main.normal = fmat3::identity();
-    uniforms_main.camera = {0,0,5};
-
-    uniforms_main.background = (fvec3(255,157,0)/255/10).apply([](float x){return std::pow(x,2.2);});
+    shader_main          .Create<AttributesMain>(ShaderSource::main_v          , ShaderSource::main_f          , &uniforms_main          );
+    shader_add_light     .Create<AttributesTex >(ShaderSource::add_light_v     , ShaderSource::add_light_f     , &uniforms_add_light     );
+    shader_extract_bright.Create<AttributesTex >(ShaderSource::extract_bright_v, ShaderSource::extract_bright_f, &uniforms_extract_bright);
+    shader_blur          .Create<AttributesTex >(ShaderSource::blur_v          , ShaderSource::blur_f          , &uniforms_blur          );
+    shader_identity      .Create<AttributesTex >(ShaderSource::identity_v      , ShaderSource::identity_f      , &uniforms_identity      );
+    shader_final         .Create<AttributesTex >(ShaderSource::final_v         , ShaderSource::final_f         , &uniforms_final         );
 
     { // Load materials
         auto mat_img_raw = Graphics::Image::File("assets/materials.png");
@@ -477,13 +635,19 @@ void Init()
     tex_framebuffer_hdr.Create();
     tex_framebuffer_hdr.SetData(GL_RGB16F, GL_RGB, GL_UNSIGNED_BYTE, win.Size());
     tex_framebuffer_hdr.Interpolation(Graphics::Texture::linear);
+    tex_framebuffer_hdr_normal_mat.Create();
+    tex_framebuffer_hdr_normal_mat.SetData(win.Size());
+    tex_framebuffer_hdr_normal_mat.Interpolation(Graphics::Texture::linear);
     tex_framebuffer_hdr_depth.Create();
     tex_framebuffer_hdr_depth.SetData(GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, win.Size());
     tex_framebuffer_hdr_depth.Interpolation(Graphics::Texture::linear);
     framebuffer_hdr.Create();
-    framebuffer_hdr.Attach(tex_framebuffer_hdr);
-    framebuffer_hdr.Attach(tex_framebuffer_hdr_depth,-1);
+    framebuffer_hdr.Attach({tex_framebuffer_hdr, tex_framebuffer_hdr_normal_mat});
+    framebuffer_hdr.AttachDepth(tex_framebuffer_hdr_depth);
     framebuffer_hdr.Unbind();
+    framebuffer_hdr_color.Create();
+    framebuffer_hdr_color.Attach(tex_framebuffer_hdr);
+    framebuffer_hdr_color.Unbind();
 
     for (auto it : {&tex_framebuffer_bloom1, &tex_framebuffer_bloom2})
     {
@@ -496,6 +660,10 @@ void Init()
     framebuffer_bloom2.Create();
     framebuffer_bloom1.Attach(tex_framebuffer_bloom1);
     framebuffer_bloom2.Attach(tex_framebuffer_bloom2);
+
+    uniforms_add_light.materials = tex_materials;
+    uniforms_add_light.normal_mat = tex_framebuffer_hdr_normal_mat;
+    uniforms_add_light.depth = tex_framebuffer_hdr_depth;
 
     uniforms_extract_bright.texture = tex_framebuffer_hdr;
     uniforms_extract_bright.threshold = 1.1;
@@ -612,6 +780,9 @@ int main(int, char **)
 {
     Init();
 
+    Render::SetBackground(fvec3(255,157,0)/255/10);
+    Render::SetProjection(fmat4::perspective(to_rad(85), win.Size().ratio(), 0.1, 100));
+
     Graphics::VertexBuffer<AttributesMain> buf = LoadModel("assets/plane0.obj");
 
     //fquat q = fquat::around_axis({1,0,0}, f_pi / 6);
@@ -634,32 +805,34 @@ int main(int, char **)
         Graphics::CheckErrors();
 
         Graphics::Blending::Enable();
-        Graphics::Blending::FuncNormalPre();
+        Graphics::Blending::FuncOverwrite();
         Graphics::Depth(1);
         framebuffer_hdr.Bind();
         shader_main.Bind();
 
         Graphics::Clear(Graphics::color | Graphics::depth);
 
-        //q = q /mul/ fquat::around_axis({0,1,0}, 0.01);
-        //q.normalize();
         fquat q = fquat::around_axis({0,1,0}, rot.x) /mul/ fquat::around_axis({0,0,1}, rot.y);
-        //fmat4 m = fmat4::translate({0,0,-2.5}) /mul/ q.make_mat4();
 
-        uniforms_main.view = fmat4::look_at(q /mul/ fvec3(2.5,0,0), {0,0,0}, q /mul/ fvec3(0,1,0));
-        uniforms_main.camera = q /mul/ fvec3(2.5,0,0);
-        uniforms_main.model = fmat4::translate({0,0,-0.5});
-        //uniforms_main.model = m;
-        //uniforms_main.normal = m.to_mat3().inverse().transpose();
+        Render::SetView(fmat4::look_at(q /mul/ fvec3(2.5,0,0), {0,0,0}, q /mul/ fvec3(0,1,0)));
+        Render::SetModel(fmat4::translate({0,0,-0.5}));
         buf.Draw(Graphics::triangles);
 
-        Graphics::Blending::Disable();
-        Graphics::Blending::FuncAdd();
         Graphics::Depth(0);
+        framebuffer_hdr_color.Bind();
+
+        Graphics::Blending::FuncAdd();
+
+        Render::Light({5,5,5}, fvec3(4,4,10) * 50);
+        Render::Light(fmat3::rotate({0,1,0}, Events::Time() / 40.               ) /mul/ fvec3(3,0,0), fvec3(4,1,1) * 2);
+        Render::Light(fmat3::rotate({0,1,0}, Events::Time() / 40. + f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,4,1) * 2);
+        Render::Light(fmat3::rotate({0,1,0}, Events::Time() / 40. - f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,1,4) * 2);
+
+        Graphics::Blending::Disable();
 
         framebuffer_bloom1.Bind();
         shader_extract_bright.Bind();
-        FullscreenQuad();
+        Render::FullscreenQuad();
 
         shader_blur.Bind();
 
@@ -676,17 +849,17 @@ int main(int, char **)
             framebuffer_bloom2.Bind();
             uniforms_blur.vertical = 0;
             uniforms_blur.texture = tex_framebuffer_bloom1;
-            FullscreenQuad();
+            Render::FullscreenQuad();
 
             framebuffer_bloom1.Bind();
             uniforms_blur.vertical = 1;
             uniforms_blur.texture = tex_framebuffer_bloom2;
-            FullscreenQuad();
+            Render::FullscreenQuad();
 
             Graphics::Blending::Enable();
             framebuffer_hdr.Bind();
             shader_identity.Bind();
-            FullscreenQuad();
+            Render::FullscreenQuad();
             Graphics::Blending::Disable();
         }
 
@@ -694,7 +867,7 @@ int main(int, char **)
 
         shader_final.Bind();
 
-        FullscreenQuad();
+        Render::FullscreenQuad();
 
         win.Swap();
     }

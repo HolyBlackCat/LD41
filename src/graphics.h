@@ -5,7 +5,9 @@
 #include <bitset>
 #include <cstddef>
 #include <functional>
+#include <initializer_list>
 #include <ios>
+#include <numeric>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -1736,11 +1738,26 @@ namespace Graphics
             return binding == *handle;
         }
 
-        void Attach(Attachment att, int slot = 0) // Binds the framebuffer. `slot == -1` is for depth buffer.
+        void Attach(Attachment att) // Binds the framebuffer. All previous color attachements are removed.
         {
             Bind();
-            GLint slot_enum = (slot >= 0 ? GL_COLOR_ATTACHMENT0 + slot : GL_DEPTH_ATTACHMENT);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, slot_enum, att.type, att.handle, 0);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, att.type, att.handle, 0);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        }
+        void Attach(Utils::ViewRange<Attachment> att) // Binds the framebuffer. All previous color attachements are removed.
+        {
+            Bind();
+            int pos = 0;
+            for (const auto &it : att)
+                glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + pos++, it.type, it.handle, 0);
+            std::vector<GLenum> att_enums(pos);
+            std::iota(att_enums.begin(), att_enums.end(), GL_COLOR_ATTACHMENT0);
+            glDrawBuffers(pos, att_enums.data());
+        }
+        void AttachDepth(Attachment att) // Binds the framebuffer.
+        {
+            Bind();
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, att.type, att.handle, 0);
         }
     };
 }

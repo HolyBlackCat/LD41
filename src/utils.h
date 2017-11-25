@@ -405,7 +405,9 @@ namespace Utils
         inline static constexpr bool is_const = std::is_const_v<T>;
 
         Range() : Range((T *)0, (T *)0) {}
-        template <typename Object, typename = std::enable_if_t<!std::is_same_v<Object, Range>>>
+        template <typename Object, typename = std::void_t<std::enable_if_t<!std::is_same_v<Object, Range>>,
+                                                          decltype(std::begin(std::declval<Object &>())),
+                                                          decltype(std::end  (std::declval<Object &>()))>>
         Range(const Object &obj) : Range(std::begin(obj), std::end(obj))
         {
             static_assert(S != contiguous || impl::has_contiguous_storage<Object>::value, "The object must have a contiguous storage.");
