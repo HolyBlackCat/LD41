@@ -318,7 +318,7 @@ void main()
     float roughness = stats.y;
     float ao        = stats.z;
 
-    vec3 N = normal_mat.xyz * 2. - 1.;
+    vec3 N = normalize(normal_mat.xyz * 2. - 1.); // Normalization is necessary, otherwise sometimes point lights are rendered as disks.
 
     vec4 pos = u_inverse_projection_view * vec4(vec3(v_pos, depth) * 2. - 1., 1);
     pos.xyz /= pos.w;
@@ -716,6 +716,7 @@ int main(int, char **)
     //Graphics::SetClearColor((fvec3(127,209,255)/255).apply([](float x){return std::pow(x,2.2);}));
 
     fvec2 rot(0);
+    float roll = 0;
 
     while (1)
     {
@@ -726,6 +727,7 @@ int main(int, char **)
 
         rot += fvec2(Input::Keys::arrow_right.down() - Input::Keys::arrow_left.down(),
                      Input::Keys::arrow_up.down() - Input::Keys::arrow_down.down()) * 0.02;
+        roll += (Input::Keys::num_2.down() - Input::Keys::num_1.down()) * 0.01;
 
         Graphics::CheckErrors();
 
@@ -740,7 +742,7 @@ int main(int, char **)
         fquat q = fquat::around_axis({0,1,0}, rot.x) /mul/ fquat::around_axis({0,0,1}, rot.y);
 
         Render::SetView(fmat4::look_at(q /mul/ fvec3(2.5,0,0), {0,0,0}, q /mul/ fvec3(0,1,0)));
-        Render::SetModel(fmat4::translate({0,0,-0.5}));
+        Render::SetModel(fmat4::translate({0,0,-0.5}) /mul/ fmat4::rotate({1,0,0}, roll));
         buf.Draw(Graphics::triangles);
 
         Graphics::Depth(0);
