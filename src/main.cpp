@@ -30,6 +30,7 @@ ReflectStruct(UniformsAddLight, (
     (Graphics::Shader::FragmentUniform<fmat4>)(inverse_projection_view),
     (Graphics::Shader::FragmentUniform<fvec3>)(camera),
     (Graphics::Shader::FragmentUniform<fvec3>)(light_pos,light_color),
+    (Graphics::Shader::FragmentUniform<float>)(light_radius),
 ))
 
 ReflectStruct(UniformsExtractBright, (
@@ -270,35 +271,25 @@ VARYING(vec2, pos)
 
 const float PI = 3.14159265359;
 
-float DistributionGGX(vec3 N, vec3 H, float roughness)
+float DistributionGGX(float NdotH, float a, float ap)
 {
-    float a      = roughness*roughness;
-    float a2     = a*a;
-    float NdotH  = max(dot(N, H), 0.0);
+    float a2     = a * a;
+    float ap2    = ap * ap;
     float NdotH2 = NdotH*NdotH;
 
-    float nom   = a2;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    float nom   = a2 * a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0) * ap;
     denom = PI * denom * denom;
 
     return nom / denom;
 }
-float GeometrySchlickGGX(float NdotV, float roughness)
+float GeometrySmith(float NdotV, float NdotL, float roughness)
 {
-    float r = (roughness + 1.0);
+    float r = roughness + 1.0;
     float k = (r*r) / 8.0;
-
-    float nom   = NdotV;
-    float denom = NdotV * (1.0 - k) + k;
-
-    return nom / denom;
-}
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx2  = GeometrySchlickGGX(NdotV, roughness);
-    float ggx1  = GeometrySchlickGGX(NdotL, roughness);
+    float f = 1. - k;
+    float ggx2  = NdotV / (NdotV * f + k);
+    float ggx1  = NdotL / (NdotL * f + k);
 
     return ggx1 * ggx2;
 }
@@ -309,13 +300,15 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
 
 void main()
 {
+    const float min_roughness = 1./256.;
+
     float depth = texture(u_depth, v_pos).r;
     if (depth == 1) discard;
     vec4 normal_mat = texture2D(u_normal_mat, v_pos);
     vec3 albedo = texture2D(u_materials, vec2(normal_mat.w, 0.25)).xyz;
     vec3 stats  = texture2D(u_materials, vec2(normal_mat.w, 0.75)).xyz;
     float metallic  = stats.x;
-    float roughness = stats.y;
+    float roughness = stats.y * (1.-min_roughness) + min_roughness;
     float ao        = stats.z;
 
     vec3 N = normalize(normal_mat.xyz * 2. - 1.); // Normalization is necessary, otherwise sometimes point lights are rendered as disks.
@@ -328,33 +321,43 @@ void main()
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
 
-    // reflectance equation
-    vec3 Lo = vec3(0.0);
+    vec3 L = u_light_pos - pos.xyz;
+    if (u_light_radius != 0)
+    {
+        vec3 r = reflect(-V, N);
+        vec3 v = dot(L, r) * r - L;
+        L += v * clamp(u_light_radius / length(v), 0.0, 1.0);
+    }
+    float distance = length(L);
+    L /= distance;
 
-    // calculate per-light radiance
-    vec3 rel_pos = u_light_pos - pos.xyz;
-    float distance    = length(rel_pos);
-    float attenuation = 1.0 / (distance * distance);
-    vec3 radiance     = u_light_color * attenuation;
-    vec3 L = rel_pos / distance;
     vec3 H = normalize(V + L);
 
+    vec3 radiance = u_light_color / (distance * distance);
+
+    float a  = roughness * roughness;
+    float ap = clamp(u_light_radius / (distance * 2.0) + a, 0.0, 1.0);
+
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotH = max(dot(N, H), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+
+
     // cook-torrance brdf
-    float NDF = DistributionGGX(N, H, roughness);
-    float G   = GeometrySmith(N, V, L, roughness);
-    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+    float NDF = DistributionGGX(NdotH, a, ap);
+    float G   = GeometrySmith(NdotV, NdotL, roughness);
+    vec3 F    = fresnelSchlick(HdotV, F0);
 
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
     kD *= 1.0 - metallic;
 
     vec3 nominator    = NDF * G * F;
-    float denominator = 4 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.001;
+    float denominator = 4 * NdotV * NdotL + 0.001;
     vec3 specular     = nominator / denominator;
 
-    // add to outgoing radiance Lo
-    float NdotL = max(dot(N, L), 0.0);
-    Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+    vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
 
     gl_FragColor = vec4(Lo, 1.0);
 })";
@@ -458,6 +461,8 @@ class Render
 {
     ~Render() = delete;
     inline static fmat4 projection = fmat4::identity(), view = fmat4::identity();
+    inline static float last_light_radius = -1;
+    inline static fvec3 last_light_color = fvec3(-1);
   public:
     static void FullscreenQuad()
     {
@@ -505,11 +510,18 @@ class Render
         uniforms_main.background = c;
     }
 
-    static void Light(fvec3 pos, fvec3 color)
+    static void PointLight(fvec3 pos, fvec3 color)
+    {
+        SphereLight(pos, color, 0);
+    }
+    static void SphereLight(fvec3 pos, fvec3 color, float radius)
     {
         shader_add_light.Bind();
         uniforms_add_light.light_pos = pos;
-        uniforms_add_light.light_color = color;
+        if (last_light_color != color)
+            uniforms_add_light.light_color = last_light_color = color;
+        if (last_light_radius != radius)
+            uniforms_add_light.light_radius = last_light_radius = radius;
         FullscreenQuad();
     }
 };
@@ -705,7 +717,8 @@ int main(int, char **)
 {
     Init();
 
-    Render::SetBackground(fvec3(255,157,0)/255/10);
+    //Render::SetBackground(fvec3(255,157,0)/255/10);
+    Render::SetBackground(fvec3(1,1,2)/20);
     Render::SetProjection(fmat4::perspective(to_rad(85), win.Size().ratio(), 0.1, 100));
 
     Graphics::VertexBuffer<AttributesMain> buf = LoadModel("assets/plane0.obj");
@@ -715,7 +728,7 @@ int main(int, char **)
     Graphics::SetClearColor(fvec3(0,0,0));
     //Graphics::SetClearColor((fvec3(127,209,255)/255).apply([](float x){return std::pow(x,2.2);}));
 
-    fvec2 rot(0);
+    fvec2 rot(2.18,0.56);
     float roll = 0;
 
     while (1)
@@ -750,10 +763,14 @@ int main(int, char **)
 
         Graphics::Blending::FuncAdd();
 
-        Render::Light({5,5,5}, fvec3(4,4,10) * 50);
-        Render::Light(fmat3::rotate({0,1,0}, Events::Time() / 40.               ) /mul/ fvec3(3,0,0), fvec3(4,1,1) * 2);
-        Render::Light(fmat3::rotate({0,1,0}, Events::Time() / 40. + f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,4,1) * 2);
-        Render::Light(fmat3::rotate({0,1,0}, Events::Time() / 40. - f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,1,4) * 2);
+        float r = mouse.pos().x / 800. * 10;
+        std::cout << r << '\n';
+        //Render::SphereLight({5,5,5}, fvec3(4,4,10) * 12, 5);
+        Render::SphereLight({5,5,5}, fvec3(4,4,10), r);
+        //Render::PointLight({5,5,5}, fvec3(4,4,10) * 2);
+        //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40.               ) /mul/ fvec3(3,0,0), fvec3(4,1,1) * 2);
+        //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40. + f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,4,1) * 2);
+        //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40. - f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,1,4) * 2);
 
         Graphics::Blending::Disable();
 
