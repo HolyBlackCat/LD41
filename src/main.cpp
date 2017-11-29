@@ -19,6 +19,7 @@ ReflectStruct(UniformsMain, (
     (Graphics::Shader::FragmentUniform<Graphics::Texture>)(materials),
     (Graphics::Shader::FragmentUniform<Graphics::Texture>)(lookup),
     (Graphics::Shader::FragmentUniform<fvec3>)(background),
+    (Graphics::Shader::FragmentUniform<float>)(emission_factor),
 ))
 
 ReflectStruct(AttributesTex, (
@@ -226,8 +227,9 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
 
 void main()
 {
-    vec3 albedo = texture2D(u_materials, vec2(v_material, 0.25)).xyz;
-    vec3 stats  = texture2D(u_materials, vec2(v_material, 0.75)).xyz;
+    vec3 albedo   = texture2D(u_materials, vec2(v_material, 0.5 / 3.0)).xyz;
+    vec3 stats    = texture2D(u_materials, vec2(v_material, 1.5 / 3.0)).xyz;
+    vec3 emission = texture2D(u_materials, vec2(v_material, 2.5 / 3.0)).xyz * u_emission_factor;
     float metallic  = stats.x;
     float roughness = stats.y;
     float ao        = stats.z;
@@ -255,7 +257,7 @@ void main()
 
     vec3 ambient = (kD * diffuse + specular) * ao;
 
-    gl_FragData[0] = vec4(ambient, 1.0);
+    gl_FragData[0] = vec4(ambient + emission, 1.0);
     gl_FragData[1] = vec4(N / 2. + .5, v_material);
 })";
     }
@@ -306,8 +308,8 @@ void main()
     float depth = texture(u_depth, v_pos).r;
     if (depth == 1) discard;
     vec4 normal_mat = texture2D(u_normal_mat, v_pos);
-    vec3 albedo = texture2D(u_materials, vec2(normal_mat.w, 0.25)).xyz;
-    vec3 stats  = texture2D(u_materials, vec2(normal_mat.w, 0.75)).xyz;
+    vec3 albedo = texture2D(u_materials, vec2(normal_mat.w, 0.5 / 3.0)).xyz;
+    vec3 stats  = texture2D(u_materials, vec2(normal_mat.w, 1.5 / 3.0)).xyz;
     float metallic  = stats.x;
     float roughness = stats.y * (1.-min_roughness) + min_roughness;
     float ao        = stats.z;
@@ -598,20 +600,25 @@ void Init()
 
     { // Load materials
         auto mat_img_raw = Graphics::Image::File("assets/materials.png");
-        if (mat_img_raw.Size().y != 4)
-            Program::Error("Bad material texture: H must be 4.");
+        if (mat_img_raw.Size().y != 5)
+            Program::Error("Bad material texture: H must be 5.");
         int mat_count = mat_img_raw.Size().x;
-        auto mat_img = Graphics::Image::Memory({mat_count, 2});
+        auto mat_img = Graphics::Image::Memory({mat_count,3});
         for (int x = 0; x < mat_count; x++)
         {
             mat_img.FastSet({x,0}, mat_img_raw.FastGet({x,0}));
             auto metallic          = mat_img_raw.FastGet({x,1});
             auto roughness         = mat_img_raw.FastGet({x,2});
             auto ambient_occlusion = mat_img_raw.FastGet({x,3});
-            for (const auto &it : {metallic, roughness, ambient_occlusion})
-                if (it.x != it.y || it.y != it.z || it.w != 255)
+            auto emission          = mat_img_raw.FastGet({x,4});
+            for (const auto &it : {metallic, roughness, ambient_occlusion}) // Those are greyscale. Emission doesn't belong here.
+                if (it.x != it.y || it.y != it.z)
                     Program::Error(Str("Bad material texture: Properties are not greyscale for index ", x, "."));
+            for (const auto &it : {metallic, roughness, ambient_occlusion, emission})
+                if (it.w != 255)
+                    Program::Error(Str("Bad material texture: Properties have nonzero alpha for index ", x, "."));
             mat_img.FastSet({x,1}, u8vec4(metallic.x, roughness.x, ambient_occlusion.x, 0));
+            mat_img.FastSet({x,2}, emission);
         }
 
         tex_materials.Create();
@@ -627,6 +634,7 @@ void Init()
     tex_lookup.Wrap(Graphics::Texture::clamp);
     tex_lookup.SetData(Graphics::Image::File("assets/lookup.png"));
     uniforms_main.lookup = tex_lookup;
+    uniforms_main.emission_factor = 4;
 
     tex_framebuffer_hdr.Create();
     tex_framebuffer_hdr.SetData(GL_RGB16F, GL_RGB, GL_UNSIGNED_BYTE, win.Size());
@@ -822,10 +830,8 @@ int main(int, char **)
 
         Graphics::Blending::FuncAdd();
 
-        //float r = mouse.pos().x / 800. * 10;
-        //std::cout << r << '\n';
         //Render::SphereLight({5,5,5}, fvec3(4,4,10), r);
-        Render::LineLight({5,5,5}, {5,-5,5}, fvec3(4,4,10) * 12);
+        Render::TubeLight({5,5,5}, {5,-5,5}, fvec3(4,4,10) * 12, 10);
 
         Render::FlushLights();
         Graphics::Blending::Disable();
