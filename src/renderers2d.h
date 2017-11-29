@@ -804,7 +804,7 @@ void main()
         void Create(int size, const std::string &v_src, const std::string &f_src, const Graphics::Shader::Config &cfg = {}) // With custom shader.
         {
             decltype(shader) new_shader;
-            new_shader.Create<Attributes>(v_src, f_src, &uni, cfg);
+            new_shader.Create<Attributes>("2D renderer", v_src, f_src, &uni, cfg);
             decltype(queue) new_queue(size);
             shader = std::move(new_shader);
             queue  = std::move(new_queue);

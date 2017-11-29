@@ -26,11 +26,13 @@ ReflectStruct(AttributesTex, (
 ))
 
 ReflectStruct(UniformsAddLight, (
+    (inline static constexpr int light_batch_size = 100;),
     (Graphics::Shader::FragmentUniform<Graphics::Texture>)(materials,normal_mat,depth),
     (Graphics::Shader::FragmentUniform<fmat4>)(inverse_projection_view),
     (Graphics::Shader::FragmentUniform<fvec3>)(camera),
-    (Graphics::Shader::FragmentUniform<fvec3>)(light_pos,light_color),
-    (Graphics::Shader::FragmentUniform<float>)(light_radius),
+    (Graphics::Shader::FragmentUniform<int>)(light_count),
+    (Graphics::Shader::FragmentUniform<fvec3[light_batch_size]>)(light_pos,light_color),
+    (Graphics::Shader::FragmentUniform<float[light_batch_size]>)(light_radius),
 ))
 
 ReflectStruct(UniformsExtractBright, (
@@ -311,6 +313,8 @@ void main()
     float roughness = stats.y * (1.-min_roughness) + min_roughness;
     float ao        = stats.z;
 
+    float a = roughness * roughness;
+
     vec3 N = normalize(normal_mat.xyz * 2. - 1.); // Normalization is necessary, otherwise sometimes point lights are rendered as disks.
 
     vec4 pos = u_inverse_projection_view * vec4(vec3(v_pos, depth) * 2. - 1., 1);
@@ -318,47 +322,51 @@ void main()
 
     vec3 V = normalize(u_camera - pos.xyz);
 
+    float NdotV = max(dot(N, V), 0.0);
+
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
 
-    vec3 L = u_light_pos - pos.xyz;
-    if (u_light_radius != 0)
+    vec3 Lo = vec3(0);
+
+    for (int i = 0; i < u_light_count; i++)
     {
-        vec3 r = reflect(-V, N);
-        vec3 v = dot(L, r) * r - L;
-        L += v * clamp(u_light_radius / length(v), 0.0, 1.0);
+        float light_radius = u_light_radius[i];
+        vec3 L = u_light_pos[i] - pos.xyz;
+        if (light_radius != 0)
+        {
+            vec3 r = reflect(-V, N);
+            vec3 v = dot(L, r) * r - L;
+            L += v * clamp(light_radius / length(v), 0.0, 1.0);
+        }
+        float distance = length(L);
+        L /= distance;
+
+        vec3 H = normalize(V + L);
+
+        vec3 radiance = u_light_color[i] / (distance * distance);
+
+        float ap = clamp(light_radius / (distance * 2.0) + a, 0.0, 1.0);
+
+        float NdotL = max(dot(N, L), 0.0);
+        float NdotH = max(dot(N, H), 0.0);
+        float HdotV = max(dot(H, V), 0.0);
+
+        // cook-torrance brdf
+        float NDF = DistributionGGX(NdotH, a, ap);
+        float G   = GeometrySmith(NdotV, NdotL, roughness);
+        vec3 F    = fresnelSchlick(HdotV, F0);
+
+        vec3 kS = F;
+        vec3 kD = vec3(1.0) - kS;
+        kD *= 1.0 - metallic;
+
+        vec3 nominator    = NDF * G * F;
+        float denominator = 4 * NdotV * NdotL + 0.001;
+        vec3 specular     = nominator / denominator;
+
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
     }
-    float distance = length(L);
-    L /= distance;
-
-    vec3 H = normalize(V + L);
-
-    vec3 radiance = u_light_color / (distance * distance);
-
-    float a  = roughness * roughness;
-    float ap = clamp(u_light_radius / (distance * 2.0) + a, 0.0, 1.0);
-
-    float NdotL = max(dot(N, L), 0.0);
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotH = max(dot(N, H), 0.0);
-    float HdotV = max(dot(H, V), 0.0);
-
-
-    // cook-torrance brdf
-    float NDF = DistributionGGX(NdotH, a, ap);
-    float G   = GeometrySmith(NdotV, NdotL, roughness);
-    vec3 F    = fresnelSchlick(HdotV, F0);
-
-    vec3 kS = F;
-    vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
-
-    vec3 nominator    = NDF * G * F;
-    float denominator = 4 * NdotV * NdotL + 0.001;
-    vec3 specular     = nominator / denominator;
-
-    vec3 Lo = (kD * albedo / PI + specular) * radiance * NdotL;
-
     gl_FragColor = vec4(Lo, 1.0);
 })";
     }
@@ -461,8 +469,10 @@ class Render
 {
     ~Render() = delete;
     inline static fmat4 projection = fmat4::identity(), view = fmat4::identity();
-    inline static float last_light_radius = -1;
-    inline static fvec3 last_light_color = fvec3(-1);
+    inline static fvec3 light_pos_list[UniformsAddLight::light_batch_size],
+                        light_color_list[UniformsAddLight::light_batch_size];
+    inline static float light_radius_list[UniformsAddLight::light_batch_size];
+    inline static int light_count = 0;
   public:
     static void FullscreenQuad()
     {
@@ -516,13 +526,22 @@ class Render
     }
     static void SphereLight(fvec3 pos, fvec3 color, float radius)
     {
+        if (light_count >= UniformsAddLight::light_batch_size)
+            FlushLights();
+        light_pos_list[light_count] = pos;
+        light_color_list[light_count] = color;
+        light_radius_list[light_count] = radius;
+        light_count++;
+    }
+    static void FlushLights()
+    {
         shader_add_light.Bind();
-        uniforms_add_light.light_pos = pos;
-        if (last_light_color != color)
-            uniforms_add_light.light_color = last_light_color = color;
-        if (last_light_radius != radius)
-            uniforms_add_light.light_radius = last_light_radius = radius;
+        uniforms_add_light.light_count = light_count;
+        uniforms_add_light.light_pos.set(light_pos_list, light_count);
+        uniforms_add_light.light_color.set(light_color_list, light_count);
+        uniforms_add_light.light_radius.set(light_radius_list, light_count);
         FullscreenQuad();
+        light_count = 0;
     }
 };
 
@@ -530,12 +549,12 @@ void Init()
 {
     win.Create("Woah", {800,600});
 
-    shader_main          .Create<AttributesMain>(ShaderSource::main_v          , ShaderSource::main_f          , &uniforms_main          );
-    shader_add_light     .Create<AttributesTex >(ShaderSource::add_light_v     , ShaderSource::add_light_f     , &uniforms_add_light     );
-    shader_extract_bright.Create<AttributesTex >(ShaderSource::extract_bright_v, ShaderSource::extract_bright_f, &uniforms_extract_bright);
-    shader_blur          .Create<AttributesTex >(ShaderSource::blur_v          , ShaderSource::blur_f          , &uniforms_blur          );
-    shader_identity      .Create<AttributesTex >(ShaderSource::identity_v      , ShaderSource::identity_f      , &uniforms_identity      );
-    shader_final         .Create<AttributesTex >(ShaderSource::final_v         , ShaderSource::final_f         , &uniforms_final         );
+    shader_main          .Create<AttributesMain>("Main"          , ShaderSource::main_v          , ShaderSource::main_f          , &uniforms_main          );
+    shader_add_light     .Create<AttributesTex >("Add light"     , ShaderSource::add_light_v     , ShaderSource::add_light_f     , &uniforms_add_light     );
+    shader_extract_bright.Create<AttributesTex >("Extract bright", ShaderSource::extract_bright_v, ShaderSource::extract_bright_f, &uniforms_extract_bright);
+    shader_blur          .Create<AttributesTex >("Blur"          , ShaderSource::blur_v          , ShaderSource::blur_f          , &uniforms_blur          );
+    shader_identity      .Create<AttributesTex >("Identity"      , ShaderSource::identity_v      , ShaderSource::identity_f      , &uniforms_identity      );
+    shader_final         .Create<AttributesTex >("Final"         , ShaderSource::final_v         , ShaderSource::final_f         , &uniforms_final         );
 
     { // Load materials
         auto mat_img_raw = Graphics::Image::File("assets/materials.png");
@@ -771,7 +790,16 @@ int main(int, char **)
         //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40.               ) /mul/ fvec3(3,0,0), fvec3(4,1,1) * 2);
         //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40. + f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,4,1) * 2);
         //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40. - f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,1,4) * 2);
+        constexpr int l_count = 500;
+        for (int i = 0; i < l_count; i++)
+        {
+            float a = i / float(l_count) * 2 * f_pi;
+            Render::PointLight(fvec3(0, std::cos(a), std::sin(a)) * 7, fvec3(1,.6,.3) * 0.1);
+            Render::PointLight(fvec3(std::cos(a), 0, std::sin(a)) * 7, fvec3(1,.6,.3) * 0.1);
+            Render::PointLight(fvec3(std::cos(a), std::sin(a), 0) * 7, fvec3(1,.6,.3) * 0.1);
+        }
 
+        Render::FlushLights();
         Graphics::Blending::Disable();
 
         framebuffer_bloom1.Bind();
