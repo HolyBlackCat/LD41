@@ -273,14 +273,13 @@ VARYING(vec2, pos)
 
 const float PI = 3.14159265359;
 
-float DistributionGGX(float NdotH, float a, float ap)
+float DistributionGGX(float NdotH, float a)
 {
     float a2     = a * a;
-    float ap2    = ap * ap;
     float NdotH2 = NdotH*NdotH;
 
-    float nom   = a2 * a2;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0) * ap;
+    float nom   = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
     denom = PI * denom * denom;
 
     return nom / denom;
@@ -315,14 +314,15 @@ void main()
 
     float a = roughness * roughness;
 
-    vec3 N = normalize(normal_mat.xyz * 2. - 1.); // Normalization is necessary, otherwise sometimes point lights are rendered as disks.
-
     vec4 pos = u_inverse_projection_view * vec4(vec3(v_pos, depth) * 2. - 1., 1);
     pos.xyz /= pos.w;
 
+    vec3 N = normalize(normal_mat.xyz * 2. - 1.); // Normalization is necessary, otherwise sometimes point lights are rendered as disks.
     vec3 V = normalize(u_camera - pos.xyz);
 
     float NdotV = max(dot(N, V), 0.0);
+
+    vec3 r = reflect(-V, N);
 
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
@@ -332,10 +332,29 @@ void main()
     for (int i = 0; i < u_light_count; i++)
     {
         float light_radius = u_light_radius[i];
+        vec3 radiance = u_light_color[i];
+
         vec3 L = u_light_pos[i] - pos.xyz;
+
+        bool is_tube =light_radius < -0.5;
+
+        if (is_tube) // is tube
+        {
+            light_radius = u_light_radius[i+1];
+            vec3 L2 = u_light_pos[i+1] - pos.xyz;
+            vec3 Ld = L2 - L;
+            float len = length(L);
+            float len2 = length(L2);
+            float lend = length(Ld);
+            radiance *= 2 * clamp(dot(N, L) / (2 * len) + dot(N, L2) / (2 * len2), 0.0, 1.0) / (len * len2 + dot(L, L2) + 2);
+            float r_dot_ld = dot(r, Ld);
+            float t = (dot(r, L) * dot(r, Ld) - dot(L, Ld)) / (lend * lend - r_dot_ld * r_dot_ld); // This is an approximation. Epic games paper has another better & slower one.
+            L += Ld * clamp(t, 0.0, 1.0);
+            i++;
+        }
+
         if (light_radius != 0)
         {
-            vec3 r = reflect(-V, N);
             vec3 v = dot(L, r) * r - L;
             L += v * clamp(light_radius / length(v), 0.0, 1.0);
         }
@@ -344,16 +363,22 @@ void main()
 
         vec3 H = normalize(V + L);
 
-        vec3 radiance = u_light_color[i] / (distance * distance);
+        radiance /= (distance * distance);
 
         float ap = clamp(light_radius / (distance * 2.0) + a, 0.0, 1.0);
+
+        float norm_factor;
+        if (is_tube)
+            norm_factor = a / ap;
+        else
+            norm_factor = a * a / ap / ap;
 
         float NdotL = max(dot(N, L), 0.0);
         float NdotH = max(dot(N, H), 0.0);
         float HdotV = max(dot(H, V), 0.0);
 
         // cook-torrance brdf
-        float NDF = DistributionGGX(NdotH, a, ap);
+        float NDF = DistributionGGX(NdotH, a) * norm_factor;
         float G   = GeometrySmith(NdotV, NdotL, roughness);
         vec3 F    = fresnelSchlick(HdotV, F0);
 
@@ -532,6 +557,21 @@ class Render
         light_color_list[light_count] = color;
         light_radius_list[light_count] = radius;
         light_count++;
+    }
+    static void LineLight(fvec3 a, fvec3 b, fvec3 color)
+    {
+        TubeLight(a, b, color, 0);
+    }
+    static void TubeLight(fvec3 a, fvec3 b, fvec3 color, float radius)
+    {
+        if (light_count >= UniformsAddLight::light_batch_size - 1) // Note the -1.
+            FlushLights();
+        light_pos_list[light_count  ] = a;
+        light_pos_list[light_count+1] = b;
+        light_color_list[light_count] = color; // We don't care about color of the other end.
+        light_radius_list[light_count] = -1; // This indicated that it's a tube
+        light_radius_list[light_count+1] = radius; // This indicated that it's a tube
+        light_count += 2;
     }
     static void FlushLights()
     {
@@ -782,22 +822,10 @@ int main(int, char **)
 
         Graphics::Blending::FuncAdd();
 
-        float r = mouse.pos().x / 800. * 10;
-        std::cout << r << '\n';
-        //Render::SphereLight({5,5,5}, fvec3(4,4,10) * 12, 5);
-        Render::SphereLight({5,5,5}, fvec3(4,4,10), r);
-        //Render::PointLight({5,5,5}, fvec3(4,4,10) * 2);
-        //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40.               ) /mul/ fvec3(3,0,0), fvec3(4,1,1) * 2);
-        //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40. + f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,4,1) * 2);
-        //Render::PointLight(fmat3::rotate({0,1,0}, Events::Time() / 40. - f_pi * 2 / 3) /mul/ fvec3(3,0,0), fvec3(1,1,4) * 2);
-        constexpr int l_count = 500;
-        for (int i = 0; i < l_count; i++)
-        {
-            float a = i / float(l_count) * 2 * f_pi;
-            Render::PointLight(fvec3(0, std::cos(a), std::sin(a)) * 7, fvec3(1,.6,.3) * 0.1);
-            Render::PointLight(fvec3(std::cos(a), 0, std::sin(a)) * 7, fvec3(1,.6,.3) * 0.1);
-            Render::PointLight(fvec3(std::cos(a), std::sin(a), 0) * 7, fvec3(1,.6,.3) * 0.1);
-        }
+        //float r = mouse.pos().x / 800. * 10;
+        //std::cout << r << '\n';
+        //Render::SphereLight({5,5,5}, fvec3(4,4,10), r);
+        Render::LineLight({5,5,5}, {5,-5,5}, fvec3(4,4,10) * 12);
 
         Render::FlushLights();
         Graphics::Blending::Disable();
