@@ -164,6 +164,15 @@ typedef void (SDLCALL * SDL_AudioCallback) (void *userdata, Uint8 * stream,
 
 /**
  *  The calculated values in this structure are calculated by SDL_OpenAudio().
+ *
+ *  For multi-channel audio, the default SDL channel mapping is:
+ *  2:  FL FR                       (stereo)
+ *  3:  FL FR LFE                   (2.1 surround)
+ *  4:  FL FR BL BR                 (quad)
+ *  5:  FL FR FC BL BR              (quad + center)
+ *  6:  FL FR FC LFE SL SR          (5.1 surround - last two can also be BL BR)
+ *  7:  FL FR FC LFE BC SL SR       (6.1 surround)
+ *  8:  FL FR FC LFE BL BR SL SR    (7.1 surround)
  */
 typedef struct SDL_AudioSpec
 {
@@ -502,6 +511,7 @@ typedef struct _SDL_AudioStream SDL_AudioStream;
  *  \sa SDL_AudioStreamPut
  *  \sa SDL_AudioStreamGet
  *  \sa SDL_AudioStreamAvailable
+ *  \sa SDL_AudioStreamFlush
  *  \sa SDL_AudioStreamClear
  *  \sa SDL_FreeAudioStream
  */
@@ -523,6 +533,7 @@ extern DECLSPEC SDL_AudioStream * SDLCALL SDL_NewAudioStream(const SDL_AudioForm
  *  \sa SDL_NewAudioStream
  *  \sa SDL_AudioStreamGet
  *  \sa SDL_AudioStreamAvailable
+ *  \sa SDL_AudioStreamFlush
  *  \sa SDL_AudioStreamClear
  *  \sa SDL_FreeAudioStream
  */
@@ -539,6 +550,7 @@ extern DECLSPEC int SDLCALL SDL_AudioStreamPut(SDL_AudioStream *stream, const vo
  *  \sa SDL_NewAudioStream
  *  \sa SDL_AudioStreamPut
  *  \sa SDL_AudioStreamAvailable
+ *  \sa SDL_AudioStreamFlush
  *  \sa SDL_AudioStreamClear
  *  \sa SDL_FreeAudioStream
  */
@@ -553,8 +565,8 @@ extern DECLSPEC int SDLCALL SDL_AudioStreamGet(SDL_AudioStream *stream, void *bu
  *  \sa SDL_NewAudioStream
  *  \sa SDL_AudioStreamPut
  *  \sa SDL_AudioStreamGet
- *  \sa SDL_AudioStreamClear
  *  \sa SDL_AudioStreamFlush
+ *  \sa SDL_AudioStreamClear
  *  \sa SDL_FreeAudioStream
  */
 extern DECLSPEC int SDLCALL SDL_AudioStreamAvailable(SDL_AudioStream *stream);
@@ -570,6 +582,7 @@ extern DECLSPEC int SDLCALL SDL_AudioStreamAvailable(SDL_AudioStream *stream);
  *  \sa SDL_NewAudioStream
  *  \sa SDL_AudioStreamPut
  *  \sa SDL_AudioStreamGet
+ *  \sa SDL_AudioStreamAvailable
  *  \sa SDL_AudioStreamClear
  *  \sa SDL_FreeAudioStream
  */
@@ -582,6 +595,7 @@ extern DECLSPEC int SDLCALL SDL_AudioStreamFlush(SDL_AudioStream *stream);
  *  \sa SDL_AudioStreamPut
  *  \sa SDL_AudioStreamGet
  *  \sa SDL_AudioStreamAvailable
+ *  \sa SDL_AudioStreamFlush
  *  \sa SDL_FreeAudioStream
  */
 extern DECLSPEC void SDLCALL SDL_AudioStreamClear(SDL_AudioStream *stream);
@@ -593,6 +607,7 @@ extern DECLSPEC void SDLCALL SDL_AudioStreamClear(SDL_AudioStream *stream);
  *  \sa SDL_AudioStreamPut
  *  \sa SDL_AudioStreamGet
  *  \sa SDL_AudioStreamAvailable
+ *  \sa SDL_AudioStreamFlush
  *  \sa SDL_AudioStreamClear
  */
 extern DECLSPEC void SDLCALL SDL_FreeAudioStream(SDL_AudioStream *stream);

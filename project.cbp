@@ -87,9 +87,15 @@
 			<Add library="uuid" />
 			<Add library="freetype" />
 			<Add library="z" />
+			<Add library="openal32.dll" />
+			<Add library="vorbisfile" />
+			<Add library="vorbisenc" />
+			<Add library="vorbis" />
+			<Add library="ogg" />
 			<Add directory="libs" />
 		</Linker>
 		<Unit filename="libs/glfl.cpp" />
+		<Unit filename="src/audio.h" />
 		<Unit filename="src/events.cpp" />
 		<Unit filename="src/events.h" />
 		<Unit filename="src/everything.h">
@@ -114,6 +120,7 @@
 		<Unit filename="src/strings.cpp" />
 		<Unit filename="src/strings.h" />
 		<Unit filename="src/template_utils.h" />
+		<Unit filename="src/timing.h" />
 		<Unit filename="src/ui.cpp" />
 		<Unit filename="src/ui.h" />
 		<Unit filename="src/utils.h" />
