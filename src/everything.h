@@ -1,3 +1,4 @@
+#include "audio.h"
 #include "events.h"
 #include "exceptions.h"
 #include "graphics.h"
