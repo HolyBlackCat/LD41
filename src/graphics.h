@@ -1557,6 +1557,7 @@ namespace Graphics
                   typename ReflUniforms   = void> // Has to be reflected and contain only [Vertex|Fragment]Uniform structs.
         void Create(const std::string &name, const std::string &v_src, const std::string &f_src, ReflUniforms *uniforms = 0, const Config &cfg = {})
         {
+            (void)uniforms;
             std::string v, f;
             v = "#version " + cfg.version + '\n' + cfg.vertex_header + '\n';
             f = "#version " + cfg.version + '\n' + cfg.fragment_header + '\n';
