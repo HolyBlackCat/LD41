@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include <SDL2/SDL_endian.h>
+
 #include "exceptions.h"
 #include "template_utils.h"
 
@@ -448,7 +450,7 @@ namespace Utils
         struct Object
         {
             std::string name;
-            std::vector<unsigned char> bytes;
+            std::vector<uint8_t> bytes;
         };
         std::shared_ptr<Object> data;
       public:
@@ -486,7 +488,7 @@ namespace Utils
         {
             return bool(data);
         }
-        const void *Data() const
+        const uint8_t *Data() const
         {
             return data->bytes.data();
         }
@@ -499,6 +501,56 @@ namespace Utils
             return data->name;
         }
     };
+
+
+    inline namespace ByteOrder
+    {
+        inline constexpr bool big_endian    = SDL_BYTEORDER == SDL_BIG_ENDIAN,
+                              little_endian = SDL_BYTEORDER == SDL_LIL_ENDIAN;
+
+        template <typename T> void SwapBytesInPlace(T &value)
+        {
+            static_assert(std::is_arithmetic_v<T>, "You probably don't want to use this for non-arithmetic types.");
+            if constexpr (sizeof(T) == 1) return;
+            else if constexpr (sizeof(T) == 2) {auto tmp = SDL_Swap16((uint16_t &)value); value = (T &)tmp;}
+            else if constexpr (sizeof(T) == 4) {auto tmp = SDL_Swap32((uint32_t &)value); value = (T &)tmp;}
+            else if constexpr (sizeof(T) == 8) {auto tmp = SDL_Swap64((uint64_t &)value); value = (T &)tmp;}
+
+            char (&ref)[sizeof(T)] = (char (&)[sizeof(T)])value;
+
+            for (std::size_t i = 0; i < sizeof(T)/2; i++)
+                ref[i] = ref[sizeof(T) - 1 - i];
+        }
+        template <typename T> [[nodiscard]] T SwapBytes(T value)
+        {
+            SwapBytesInPlace(value);
+            return value;
+        }
+
+        template <typename T> void MakeLittle([[maybe_unused]] T &value)
+        {
+            static_assert(std::is_arithmetic_v<T>, "You probably don't want to use this for non-arithmetic types.");
+            if constexpr (big_endian)
+                SwapBytesInPlace(value);
+        }
+        template <typename T> void MakeBig([[maybe_unused]] T value)
+        {
+            static_assert(std::is_arithmetic_v<T>, "You probably don't want to use this for non-arithmetic types.");
+            if constexpr (little_endian)
+                SwapBytesInPlace(value);
+        }
+
+        template <typename T> [[nodiscard]] T Little(T value)
+        {
+            MakeLittle(value);
+            return value;
+        }
+        template <typename T> [[nodiscard]] T Big(T value)
+        {
+            MakeBig(value);
+            return value;
+        }
+    }
 }
 
 #endif

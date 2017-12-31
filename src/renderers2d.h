@@ -11,25 +11,28 @@
 
 namespace Renderers
 {
-    ReflectStruct(Attributes, (
-        (fvec2)(pos),
-        (fvec4)(color),
-        (fvec2)(texture_pos),
-        (fvec3)(factors),
-    ))
+    namespace Poly2D_impl
+    {
+        ReflectStruct(Attributes, (
+            (fvec2)(pos),
+            (fvec4)(color),
+            (fvec2)(texture_pos),
+            (fvec3)(factors),
+        ))
 
-    ReflectStruct(Uniforms, (
-        (Graphics::Shader::VertexUniform<fmat4>)(matrix),
-        (Graphics::Shader::VertexUniform<fvec2>)(texture_size),
-        (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
-        (Graphics::Shader::FragmentUniform<fmat4>)(color_matrix),
-    ))
+        ReflectStruct(Uniforms, (
+            (Graphics::Shader::VertexUniform<fmat4>)(matrix),
+            (Graphics::Shader::VertexUniform<fvec2>)(texture_size),
+            (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
+            (Graphics::Shader::FragmentUniform<fmat4>)(color_matrix),
+        ))
+    }
 
     class Poly2D
     {
         Graphics::Shader shader;
-        Graphics::RenderQueue<Attributes, Graphics::triangles> queue;
-        Uniforms uni;
+        Graphics::RenderQueue<Poly2D_impl::Attributes, Graphics::triangles> queue;
+        Poly2D_impl::Uniforms uni;
 
         const Graphics::CharMap *ch_map = 0;
 
@@ -96,7 +99,7 @@ namespace Renderers
                 if (m_abs_tex_pos)
                     m_tex_size -= m_tex_pos;
 
-                Attributes out[4];
+                Poly2D_impl::Attributes out[4];
 
                 if (has_texture)
                 {
@@ -397,7 +400,7 @@ namespace Renderers
                 DebugAssert("2D poly renderer: Triangle with no texture nor color specified.", has_texture || has_color);
                 DebugAssert("2D poly renderer: Triangle with texture and color, but without a mixing factor.", (has_texture && has_color) == has_tex_color_fac);
 
-                Attributes out[3];
+                Poly2D_impl::Attributes out[3];
 
                 if (has_texture)
                 {
@@ -804,7 +807,7 @@ void main()
         void Create(int size, const std::string &v_src, const std::string &f_src, const Graphics::Shader::Config &cfg = {}) // With custom shader.
         {
             decltype(shader) new_shader;
-            new_shader.Create<Attributes>("2D renderer", v_src, f_src, &uni, cfg);
+            new_shader.Create<Poly2D_impl::Attributes>("2D renderer", v_src, f_src, &uni, cfg);
             decltype(queue) new_queue(size);
             shader = std::move(new_shader);
             queue  = std::move(new_queue);
@@ -821,7 +824,7 @@ void main()
         void Finish() // Binds the shader.
         {
             shader.Bind();
-            queue.Flush();
+            queue.Draw();
         }
 
         void SetMatrix(fmat4 m) // Binds the shader, flushes the queue.

@@ -1,10 +1,14 @@
 #include "events.h"
 
+#include <atomic>
+#include <csignal>
+#include <exception>
 #include <vector>
 
 #include <SDL2/SDL.h>
 
 #include "program.h"
+#include "strings.h"
 #include "window.h"
 
 namespace Events
@@ -17,15 +21,19 @@ namespace Events
     }
 
 
-    static bool exit_requested = 0;
+    static std::atomic_bool exit_requested = 0;
 
     bool ExitRequested()
     {
-        return exit_requested;
+        return exit_requested.load();
     }
     void IgnoreExitRequest()
     {
         exit_requested = 0;
+    }
+    void MakeExitRequest()
+    {
+        exit_requested = 1;
     }
 
     namespace Input
@@ -254,5 +262,52 @@ namespace Events
                 break;
             }
         }
+    }
+
+    void SetErrorHandlers()
+    {
+        auto handler = [](int sig)
+        {
+            switch (sig)
+            {
+              case SIGABRT:
+              case SIGINT:
+              case SIGTERM:
+                exit_requested = 1;
+                break;
+              case SIGFPE:
+                Program::Error("Signal: Floating point exception.", sig);
+                break;
+              case SIGILL:
+                Program::Error("Signal: Illegal instruction.", sig);
+                break;
+              case SIGSEGV:
+                Program::Error("Signal: Segmentation failure.", sig);
+                break;
+            }
+        };
+        for (int sig : {SIGABRT, SIGFPE, SIGILL, SIGINT, SIGSEGV, SIGTERM})
+            std::signal(sig, handler);
+
+        std::set_terminate([]
+        {
+            std::exception_ptr e = std::current_exception();
+            if (e)
+            {
+                try
+                {
+                    std::rethrow_exception(e);
+                }
+                catch (std::exception &e)
+                {
+                    Program::Error(Str("Exception: ", e.what()));
+                }
+                catch (...)
+                {
+                    Program::Error("Unknown exception.");
+                }
+            }
+            Program::Error("Terminated.");
+        });
     }
 }

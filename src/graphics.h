@@ -79,7 +79,10 @@ namespace Graphics
             (ivec2,size,"Size")
         )
 
-        DefineExceptionInline(cant_load_image, :exception, "Can't load image.",
+        DefineExceptionInline(cant_parse_image, :exception, "Unable to parse an image.",
+            (std::string,name,"Name")
+        )
+        DefineExceptionInline(cant_save_image, :exception, "Unable to save an image.",
             (std::string,name,"Name")
         )
 
@@ -149,6 +152,14 @@ namespace Graphics
             SetClearColor(c.to_vec4(1));
         }
 
+        inline void Viewport(ivec2 pos, ivec2 size)
+        {
+            glViewport(pos.x, pos.y, size.x, size.y);
+        }
+        inline void Viewport(ivec2 size)
+        {
+            Viewport({0,0}, size);
+        }
 
         namespace Blending
         {
@@ -219,13 +230,13 @@ namespace Graphics
         enum Format {png, tga};
 
         Image() {}
-        Image(ivec2 size, const char *ptr = 0)
+        Image(ivec2 size, const uint8_t *ptr = 0)
         {
             FromMemory(size, ptr);
         }
-        Image(std::string fname, bool flip_y = 0)
+        Image(Utils::MemoryFile file, bool flip_y = 0)
         {
-            FromFile(fname, flip_y);
+            FromFile(file, flip_y);
         }
         ivec2 Size() const {return {width, int(data.size()) / width};}
         const u8vec4 *Data() const {return data.data();}
@@ -260,23 +271,23 @@ namespace Graphics
             return *this;
         }
 
-        void FromMemory(ivec2 size, const char *ptr = 0)
+        void FromMemory(ivec2 size, const uint8_t *ptr = 0)
         {
             width = size.x;
             data.resize(size.product());
             if (ptr)
-                std::copy(ptr, ptr + size.product() * sizeof(u8vec4), (char *)data.data());
+                std::copy(ptr, ptr + size.product() * sizeof(u8vec4), (uint8_t *)data.data());
         }
-        void FromFile(std::string fname, bool flip_y = 0)
+        void FromFile(Utils::MemoryFile file, bool flip_y = 0)
         {
             stbi_set_flip_vertically_on_load(flip_y); // This just sets an internal flag, shouldn't be slow.
             ivec2 size;
             [[maybe_unused]] int components;
-            char *ptr = (char *)stbi_load(fname.c_str(), &size.x, &size.y, &components, 4);
+            uint8_t *ptr = stbi_load_from_memory(file.Data(), file.Size(), &size.x, &size.y, &components, 4);
             if (!ptr)
             {
                 width = 0;
-                throw cant_load_image(fname);
+                throw cant_parse_image(file.Name());
             }
             FromMemory(size, ptr);
             stbi_image_free(ptr);
@@ -291,26 +302,29 @@ namespace Graphics
             return data.size() != 0;
         }
 
-        [[nodiscard]] static Image Memory(ivec2 size, const char *ptr = 0)
+        [[nodiscard]] static Image Memory(ivec2 size, const uint8_t *ptr = 0)
         {
             return Image(size, ptr);
         }
-        [[nodiscard]] static Image File(std::string fname, bool flip_y = 0)
+        [[nodiscard]] static Image File(Utils::MemoryFile file, bool flip_y = 0)
         {
-            return Image(fname, flip_y);
+            return Image(file, flip_y);
         }
 
         void SaveToFile(Format format, std::string fname)
         {
+            int status = 0;
             switch (format)
             {
               case png:
-                stbi_write_png(fname.c_str(), Size().x, Size().y, 4, data.data(), width * sizeof(u8vec4));
+                status = stbi_write_png(fname.c_str(), Size().x, Size().y, 4, data.data(), width * sizeof(u8vec4));
                 return;
               case tga:
-                stbi_write_tga(fname.c_str(), Size().x, Size().y, 4, data.data());
+                status = stbi_write_tga(fname.c_str(), Size().x, Size().y, 4, data.data());
                 return;
             }
+            if (!status)
+                throw cant_save_image(fname);
         }
 
         /*
@@ -1260,12 +1274,31 @@ namespace Graphics
         }
     };
 
-    template <typename T, Primitive P> class RenderQueue
+    enum OverflowPolicy {flush, expand};
+
+    template <typename T, Primitive P, OverflowPolicy Policy = flush> class RenderQueue
     {
         static_assert(Reflection::Interface::field_count<T>(), "T must be reflected.");
         std::vector<T> data;
         int pos = 0;
         VertexBuffer<T> buffer;
+
+        void Overflow()
+        {
+            if constexpr (Policy == flush)
+                Draw();
+            else // expand
+            {
+                int new_size = data.size();
+                     if constexpr (P == lines) new_size /= 2;
+                else if constexpr (P == triangles) new_size /= 3;
+                new_size = new_size * 3 / 2;
+                     if constexpr (P == lines) new_size *= 2;
+                else if constexpr (P == triangles) new_size *= 3;
+                data.resize(new_size);
+                buffer.SetData(new_size, 0, stream_draw);
+            }
+        }
       public:
         RenderQueue() {}
         RenderQueue(int prim_count)
@@ -1296,25 +1329,33 @@ namespace Graphics
             return bool(buffer);
         }
 
-        void Flush()
+        void Reset()
+        {
+            pos = 0;
+        }
+        void DrawNoReset()
         {
             DebugAssert("Attempt to flush a null render queue.", buffer.Exists());
             buffer.SetDataPart(0, pos, data.data());
             buffer.Draw(P, pos);
-            pos = 0;
+        }
+        void Draw()
+        {
+            DrawNoReset();
+            Reset();
         }
         void Point(const T &a)
         {
             static_assert(P == points, "This function for point queues only.");
             if (pos + 1 > int(data.size()))
-                Flush();
+                Overflow();
             data[pos++] = a;
         }
         void Line(const T &a, const T &b)
         {
             static_assert(P == lines, "This function for line queues only.");
             if (pos + 2 > int(data.size()))
-                Flush();
+                Overflow();
             data[pos++] = a;
             data[pos++] = b;
         }
@@ -1322,7 +1363,7 @@ namespace Graphics
         {
             static_assert(P == triangles, "This function for triangle queues only.");
             if (pos + 3 > int(data.size()))
-                Flush();
+                Overflow();
             data[pos++] = a;
             data[pos++] = b;
             data[pos++] = c;

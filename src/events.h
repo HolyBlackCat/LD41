@@ -11,6 +11,7 @@ namespace Events
     // If only one window is opened, this will be set when user tries to close it (but other exit reasons do exist).
     bool ExitRequested();
     void IgnoreExitRequest(); // Resets the above flag.
+    void MakeExitRequest(); // Sets the above flag.
 
     using Time_t = uint32_t;
     Time_t Time();
@@ -32,6 +33,8 @@ namespace Events
     }
 
     void Process();
+
+    void SetErrorHandlers();
 }
 
 #endif

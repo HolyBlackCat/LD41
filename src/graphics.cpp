@@ -1,6 +1,4 @@
-#include "graphics.h"
-
-#include "program.h"
+#include "program.h" // For DebugAssert()
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG

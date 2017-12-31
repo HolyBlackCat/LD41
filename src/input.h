@@ -3,7 +3,7 @@
 
 #include <vector>
 
-#include <SDL2/SDL_scancode.h>
+#include <SDL2/SDL.h>
 
 #include "events.h"
 
@@ -57,6 +57,9 @@ namespace Input
         DeviceID device_id;
 
       public:
+        ivec2 offset = ivec2(0);
+        float scale = 1;
+
         Mouse(DeviceType device_type, DeviceID device_id)
           : device_type(device_type), device_id(device_id),
             left      {device_type, 0, 1},
@@ -74,6 +77,15 @@ namespace Input
         [[nodiscard]] ivec2 pos() const;
         [[nodiscard]] ivec2 rel_pos() const;
         [[nodiscard]] ivec2 wheel() const;
+
+        static void Show(bool s)
+        {
+            SDL_ShowCursor(s);
+        }
+        static void Relative(bool r)
+        {
+            SDL_SetRelativeMouseMode((SDL_bool)r);
+        }
     };
 
 

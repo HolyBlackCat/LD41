@@ -8,6 +8,7 @@
 #include "reflection.h"
 #include "renderers2d.h"
 #include "strings.h"
+#include "timing.h"
 #include "template_utils.h"
 #include "ui.h"
 #include "window.h"
