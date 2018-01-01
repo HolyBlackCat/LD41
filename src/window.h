@@ -65,12 +65,12 @@ class Window
             min_size = sz;
             return *this;
         }
-        ref Resizable(bool r)
+        ref Resizable(bool r = 1)
         {
             resizable = r;
             return *this;
         }
-        ref Fullscreen(bool f)
+        ref Fullscreen(bool f = 1)
         {
             fullscreen = f;
             return *this;
@@ -107,12 +107,12 @@ class Window
             gl_profile = p;
             return *this;
         }
-        ref GlDebug(bool d)
+        ref GlDebug(bool d = 1)
         {
             gl_debug = d;
             return *this;
         }
-        ref ShareContext(bool s)
+        ref ShareContext(bool s = 1)
         {
             share_context = s;
             return *this;

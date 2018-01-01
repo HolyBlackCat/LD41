@@ -3,6 +3,8 @@
 
 #include <SDL2/SDL.h>
 
+#include "mat.h"
+
 namespace Timing
 {
     inline uint64_t Clock()                        {return SDL_GetPerformanceCounter();}
@@ -28,17 +30,20 @@ namespace Timing
 
         uint64_t accumulator;
         bool new_frame;
-
         bool lag;
+
+        float comp_th = 0, comp_amount = 0;
+        int comp_dir = 0; // Internal. 1 means forward, -1 means backwards, 0 means whatever is better.
 
       public:
         uint64_t ticks = 0;
 
         TickStabilizer() : TickStabilizer(60) {}
-        TickStabilizer(double freq, int max_ticks_per_frame = 8)
+        TickStabilizer(double freq, int max_ticks_per_frame = 8, float compensation_threshold = 0.01, float compensation_amount = 0.5)
         {
             SetFrequency(freq);
             SetMaxTicksPerFrame(max_ticks_per_frame);
+            SetCompensation(compensation_threshold, compensation_amount);
             Reset();
         }
 
@@ -50,11 +55,21 @@ namespace Timing
         {
             max_ticks = n;
         }
+
+        // Threshold should be positive and small, at least less than 1.
+        // Amount should be at least two times larger (by a some margin) than threshold, otherwise it will break. 0.5 should give best results, but don't make it much larger.
+        // When the abs('frame len' % 'tick len') / 'tick_len' < 'threshold', the compensator kicks in and adds or subtracts 'amount' * 'tick len' from the time.
+        void SetCompensation(float threshold, float amount)
+        {
+            comp_th = threshold;
+            comp_amount = amount;
+        }
         void Reset()
         {
             accumulator = 0;
             new_frame = 1;
             lag = 0;
+            comp_dir = 0;
             ticks = 0;
         }
 
@@ -85,6 +100,18 @@ namespace Timing
         {
             if (new_frame)
                 accumulator += delta;
+
+            if (abs(accumulator - tick_len) < tick_len * comp_th)
+            {
+                int dir;
+                if (comp_dir)
+                    dir = -comp_dir;
+                else
+                    dir = (accumulator < tick_len ? -1 : 1);
+
+                comp_dir += dir;
+                accumulator += tick_len * comp_amount * dir;
+            }
 
             if (accumulator >= tick_len)
             {

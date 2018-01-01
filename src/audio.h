@@ -675,7 +675,7 @@ namespace Audio
             }
         }
 
-        static void Tick()
+        static void RemoveUnused()
         {
             auto it = list.begin();
 
