@@ -778,6 +778,11 @@ namespace Graphics
         Texture(Texture &&) = default;
         Texture &operator=(Texture &&) = default;
 
+        Texture(InterpMode mode) // Creates and attaches the texture.
+        {
+            Create();
+            Interpolation(mode);
+        }
         Texture(InterpMode mode, ivec2 img_size, const u8vec4 *data = 0) // Creates and attaches the texture.
         {
             Create();
@@ -1591,11 +1596,11 @@ namespace Graphics
                 else static_assert(std::is_void_v<effective_type>, "Uniforms of this type are not supported.");
             }
         };
-        template <typename T> class VertexUniform   : public Uniform<T> {public: using Uniform<T>::Uniform; using Uniform<T>::operator=;};
-        template <typename T> class FragmentUniform : public Uniform<T> {public: using Uniform<T>::Uniform; using Uniform<T>::operator=;};
+        template <typename T> class Uniform_v : public Uniform<T> {public: using Uniform<T>::Uniform; using Uniform<T>::operator=;};
+        template <typename T> class Uniform_f : public Uniform<T> {public: using Uniform<T>::Uniform; using Uniform<T>::operator=;};
 
         template <typename ReflAttributes = void, // Has to be reflected. Regardless of reflected types, shader will get them as floats.
-                  typename ReflUniforms   = void> // Has to be reflected and contain only [Vertex|Fragment]Uniform structs.
+                  typename ReflUniforms   = void> // Has to be reflected and contain only Uniform[_v|_f] structs.
         void Create(const std::string &name, const std::string &v_src, const std::string &f_src, ReflUniforms *uniforms = 0, const Config &cfg = {})
         {
             (void)uniforms;
@@ -1619,9 +1624,9 @@ namespace Graphics
                     if (std::is_array_v<field_type_with_extent>)
                         s += Str('[', std::extent_v<field_type_with_extent>, ']');
                     s += ";\n";
-                    if constexpr (!std::is_same_v<VertexUniform<field_type>, field_type_raw>)
+                    if constexpr (!std::is_same_v<Uniform_v<field_type>, field_type_raw>)
                         f += s;
-                    if constexpr (!std::is_same_v<FragmentUniform<field_type>, field_type_raw>)
+                    if constexpr (!std::is_same_v<Uniform_f<field_type>, field_type_raw>)
                         v += s;
                 });
             }
@@ -1667,6 +1672,15 @@ namespace Graphics
             return program.handle() != 0;
         }
 
+        template <typename ReflAttributes = void,
+                  typename ReflUniforms   = void>
+        static Shader Make(const std::string &name, const std::string &v_src, const std::string &f_src, ReflUniforms *uniforms = 0, const Config &cfg = {})
+        {
+            Shader sh;
+            sh.Create<ReflAttributes, ReflUniforms>(name, v_src, f_src, uniforms, cfg);
+            return sh;
+        }
+
         void Bind() const
         {
             DebugAssert("Attempt to bind a null shader.", program.handle());
@@ -1683,11 +1697,13 @@ namespace Graphics
         }
         bool Bound() const
         {
+            DebugAssert("Attempt to use a null shader.", program.handle());
             return binding == program.handle();
         }
 
         GLint GetUniformLocation(const std::string &name) const
         {
+            DebugAssert("Attempt to use a null shader.", program.handle());
             return glGetUniformLocation(program.handle(), name.c_str());
         }
         ~Shader()

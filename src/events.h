@@ -35,6 +35,11 @@ namespace Events
     void Process();
 
     void SetErrorHandlers();
+
+    struct AutoErrorHandles // This can be used as a global variable type to set the handlers early.
+    {
+        AutoErrorHandles() {SetErrorHandlers();}
+    };
 }
 
 #endif

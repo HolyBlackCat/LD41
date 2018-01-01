@@ -21,10 +21,10 @@ namespace Renderers
         ))
 
         ReflectStruct(Uniforms, (
-            (Graphics::Shader::VertexUniform<fmat4>)(matrix),
-            (Graphics::Shader::VertexUniform<fvec2>)(texture_size),
-            (Graphics::Shader::FragmentUniform<Graphics::Texture>)(texture),
-            (Graphics::Shader::FragmentUniform<fmat4>)(color_matrix),
+            (Graphics::Shader::Uniform_v<fmat4>)(matrix),
+            (Graphics::Shader::Uniform_v<fvec2>)(texture_size),
+            (Graphics::Shader::Uniform_f<Graphics::Texture>)(texture),
+            (Graphics::Shader::Uniform_f<fmat4>)(color_matrix),
         ))
     }
 
@@ -169,17 +169,7 @@ namespace Renderers
                 queue->Quad(out[0], out[1], out[2], out[3]);
             }
 
-            ref tex(ivec2 pos, ivec2 size)
-            {
-                tex_f(pos, size);
-                return (ref)*this;
-            }
-            ref tex(ivec2 pos)
-            {
-                tex_f(pos);
-                return (ref)*this;
-            }
-            ref tex_f(fvec2 pos, fvec2 size)
+            ref tex(fvec2 pos, fvec2 size)
             {
                 DebugAssert("2D poly renderer: Quad_t texture specified twice.", !has_texture);
                 has_texture = 1;
@@ -188,9 +178,9 @@ namespace Renderers
                 m_tex_size = size;
                 return (ref)*this;
             }
-            ref tex_f(fvec2 pos)
+            ref tex(fvec2 pos)
             {
-                tex_f(pos, m_size);
+                tex(pos, m_size);
                 return (ref)*this;
             }
             ref center(fvec2 c)
@@ -237,34 +227,19 @@ namespace Renderers
                 matrix(fmat3::rotate2D(a));
                 return (ref)*this;
             }
-            ref translate(ivec2 v) // Uses a matrix.
-            {
-                translate_f(v);
-                return (ref)*this;
-            }
-            ref translate_f(fvec2 v) // Uses a matrix.
+            ref translate(fvec2 v) // Uses a matrix.
             {
                 matrix(fmat3::translate2D(v));
                 return (ref)*this;
             }
-            ref scale(ivec2 s) // Uses a matrix.
-            {
-                scale_f(s);
-                return (ref)*this;
-            }
-            ref scale(int s) // Uses a matrix.
-            {
-                scale_f(s);
-                return (ref)*this;
-            }
-            ref scale_f(fvec2 s) // Uses a matrix.
+            ref scale(fvec2 s) // Uses a matrix.
             {
                 matrix(fmat3::scale(s));
                 return (ref)*this;
             }
-            ref scale_f(float s) // Uses a matrix.
+            ref scale(float s) // Uses a matrix.
             {
-                scale_f(fvec2(s));
+                scale(fvec2(s));
                 return (ref)*this;
             }
             ref color(fvec3 c)
@@ -486,34 +461,19 @@ namespace Renderers
                 matrix(fmat3::rotate2D(a));
                 return (ref)*this;
             }
-            ref translate(ivec2 v) // Uses a matrix.
-            {
-                translate_f(v);
-                return (ref)*this;
-            }
-            ref translate_f(fvec2 v) // Uses a matrix.
+            ref translate(fvec2 v) // Uses a matrix.
             {
                 matrix(fmat3::translate2D(v));
                 return (ref)*this;
             }
-            ref scale(ivec2 s) // Uses a matrix.
-            {
-                scale_f(s);
-                return (ref)*this;
-            }
-            ref scale(int s) // Uses a matrix.
-            {
-                scale_f(s);
-                return (ref)*this;
-            }
-            ref scale_f(fvec2 s) // Uses a matrix.
+            ref scale(fvec2 s) // Uses a matrix.
             {
                 matrix(fmat3::scale(s));
                 return (ref)*this;
             }
-            ref scale_f(float s) // Uses a matrix.
+            ref scale(float s) // Uses a matrix.
             {
-                scale_f(fvec2(s));
+                scale(fvec2(s));
                 return (ref)*this;
             }
             ref color(fvec3 c)
@@ -714,22 +674,12 @@ namespace Renderers
                 matrix(fmat3::rotate2D(a));
                 return (ref)*this;
             }
-            ref scale(ivec2 s) // Uses `matrix()`.
-            {
-                scale_f(s);
-                return (ref)*this;
-            }
-            ref scale_f(fvec2 s) // Uses `matrix()`.
+            ref scale(fvec2 s) // Uses `matrix()`.
             {
                 matrix(fmat3::scale(s));
                 return (ref)*this;
             }
-            ref scale(int s) // Uses `matrix()`.
-            {
-                scale(ivec2(s));
-                return (ref)*this;
-            }
-            ref scale_f(float s) // Uses `matrix()`.
+            ref scale(float s) // Uses `matrix()`.
             {
                 scale(fvec2(s));
                 return (ref)*this;
@@ -749,12 +699,7 @@ namespace Renderers
                 m_beta = b;
                 return (ref)*this;
             }
-            ref spacing(int s)
-            {
-                spacing_f(s);
-                return (ref)*this;
-            }
-            ref spacing_f(float s)
+            ref spacing(float s)
             {
                 m_spacing += s;
                 return (ref)*this;
@@ -827,6 +772,11 @@ void main()
             queue.Draw();
         }
 
+        void BindShader() const
+        {
+            shader.Bind();
+        }
+
         void SetMatrix(fmat4 m) // Binds the shader, flushes the queue.
         {
             Finish();
@@ -858,27 +808,15 @@ void main()
             ch_map = &map;
         }
 
-        Quad_t Quad(ivec2 pos, ivec2 size)
+        Quad_t Quad(fvec2 pos, fvec2 size)
         {
             return {&queue, pos, size};
         }
-        Quad_t Quad_f(fvec2 pos, fvec2 size)
-        {
-            return {&queue, pos, size};
-        }
-        Triangle_t Triangle(ivec2 pos, ivec2 a, ivec2 b, ivec2 c)
+        Triangle_t Triangle(fvec2 pos, fvec2 a, fvec2 b, fvec2 c)
         {
             return {&queue, pos, a, b, c};
         }
-        Triangle_t Triangle_f(fvec2 pos, fvec2 a, fvec2 b, fvec2 c)
-        {
-            return {&queue, pos, a, b, c};
-        }
-        Text_t Text(ivec2 pos, std::string_view str)
-        {
-            return {&queue, ch_map, pos, str};
-        }
-        Text_t Text_f(fvec2 pos, std::string_view str)
+        Text_t Text(fvec2 pos, std::string_view str)
         {
             return {&queue, ch_map, pos, str};
         }
