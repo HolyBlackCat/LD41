@@ -1,6 +1,8 @@
 #ifndef RENDERERS2D_H_INCLUDED
 #define RENDERERS2D_H_INCLUDED
 
+#include <cstddef>
+#include <functional>
 #include <utility>
 
 #include "graphics.h"
@@ -543,21 +545,35 @@ namespace Renderers
         };
         class Text_t : TemplateUtils::MoveFunc<Text_t>
         {
+          public:
+            // Parameter list for callbacks: (uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &info, fmat3 &out_mat)
+            using callback_type = std::function<void(uint16_t ch, uint16_t prev, Text_t &, Graphics::CharMap::Char &, fmat3 &out_mat)>;
+
+            struct State
+            {
+                // The constructor sets those:
+                fvec2 pos;
+                std::string_view str;
+                const Graphics::CharMap *ch_map;
+
+                ivec2 alignment = ivec2(0);
+                fmat3 matrix = fmat3::identity();
+                fvec3 color = {1,1,1};
+                float alpha = 1, beta = 1;
+                int spacing = 0, line_gap = 0;
+                bool kerning = 1;
+                callback_type callback;
+            };
+
+          private:
+
             using ref = Text_t &&;
 
-            // The constructor sets those:
-            decltype(Poly2D::queue) *queue;
-            const Graphics::CharMap *m_ch_map;
-            fvec2 m_pos;
-            std::string_view m_str;
+            decltype(Poly2D::queue) *queue; // The constructor sets it.
 
-            fmat3 m_matrix = fmat3::identity();
-            fvec3 m_color = {1,1,1};
-            float m_alpha = 1, m_beta = 1;
-            int m_spacing = 0;
-            bool m_kerning = 1;
-            ivec2 m_offset = {0,0};
-            bool m_continue = 0;
+            State obj_state; // State
+
+            uint16_t prev_ch = 0xffff; // This is there because we reset it when changing fonts via callbacks.
 
             static void OnMove(Text_t &&from, Text_t &/*to*/)
             {
@@ -566,44 +582,152 @@ namespace Renderers
 
             void Render()
             {
-                DebugAssert("2D poly renderer: Text with no font specified.", m_ch_map != 0);
+                DebugAssert("2D poly renderer: Text with no font specified.", obj_state.ch_map != 0);
 
                 if (!queue)
                     return;
 
-                auto it = m_str.begin();
+                // Those are copied to prevent callbacks from messing them up.
+                decltype(queue) saved_queue = queue;
+                queue = 0;
+                ivec2 saved_alignment = obj_state.alignment = sign(obj_state.alignment);
 
-                uint16_t prev_ch = 0xffff;
-
-                while (it != m_str.end())
+                struct Line
                 {
-                    if (!u8isfirstbyte(it))
+                    int width, ascent, descent, line_gap;
+                };
+
+                ivec2 pos(0);
+                std::vector<Line> lines;
+                std::size_t line_number = 0;
+
+                auto Loop = [&](bool do_render)
+                {
+                    fmat3 m = fmat3::identity();
+
+                    int line_ascent  = obj_state.ch_map->Ascent(),
+                        line_descent = obj_state.ch_map->Descent(),
+                        line_gap     = obj_state.ch_map->LineGap(),
+                        line_gap_st  = obj_state.line_gap;
+                    int last_spacing = 0, last_gap = 0;
+
+                    auto StartLine = [&]
                     {
+                        if (!do_render)
+                            return;
+                        if (saved_alignment.x != -1)
+                        {
+                            pos.x = -lines[line_number].width;
+                            if (saved_alignment.x == 0)
+                                pos.x /= 2;
+                        }
+                        pos.y += lines[line_number].ascent;
+                    };
+                    auto EndLine = [&]
+                    {
+                        pos.x -= last_spacing;
+                        last_spacing = 0;
+
+                        if (!do_render)
+                            lines.push_back({pos.x, line_ascent, line_descent, line_gap});
+
+                        pos.y += line_descent + line_gap + line_gap_st;
+                        if (!do_render)
+                            pos.y += line_ascent; // Otherwise it's handle in StartLine().
+
+                        last_gap = line_gap + line_gap_st;
+
+                        line_ascent  = obj_state.ch_map->Ascent();
+                        line_descent = obj_state.ch_map->Descent();
+                        line_gap     = obj_state.ch_map->LineGap();
+                        line_gap_st  = obj_state.line_gap;
+
+                        pos.x = 0;
+
+                        if (do_render)
+                            line_number++;
+                    };
+
+                    StartLine();
+                    auto it = obj_state.str.begin();
+                    while (it != obj_state.str.end())
+                    {
+                        if (u8isfirstbyte(it))
+                        {
+                            if (*it != '\n')
+                            {
+                                uint16_t ch = u8decode(it);
+
+                                Graphics::CharMap::Char info = obj_state.ch_map->Get(ch);
+
+                                if (obj_state.callback)
+                                {
+                                    m = fmat3::identity();
+                                    const Graphics::CharMap *ch_map_copy = obj_state.ch_map;
+                                    obj_state.callback(ch, prev_ch, *this, info, m);
+                                    if (ch_map_copy != obj_state.ch_map)
+                                    {
+                                        if (line_ascent < obj_state.ch_map->Ascent())
+                                            line_ascent = obj_state.ch_map->Ascent();
+                                        if (line_descent < obj_state.ch_map->Descent())
+                                            line_descent = obj_state.ch_map->Descent();
+                                        if (line_gap < obj_state.ch_map->LineGap())
+                                            line_gap = obj_state.ch_map->LineGap();
+                                    }
+                                    if (line_gap_st > obj_state.line_gap)
+                                        line_gap_st = obj_state.line_gap;
+                                }
+
+                                if (obj_state.kerning)
+                                    pos.x += obj_state.ch_map->Kerning(prev_ch, ch);
+
+                                if (do_render)
+                                {
+                                    Quad_t(saved_queue, obj_state.pos, info.size)
+                                        .tex(info.tex_pos)
+                                        .alpha(obj_state.alpha).beta(obj_state.beta).color(obj_state.color).mix(0)
+                                        .center(ivec2(0)).matrix(obj_state.matrix /mul/ fmat3::translate2D(pos + info.offset) /mul/ m);
+                                }
+
+                                pos.x += info.advance + (last_spacing = obj_state.spacing);
+
+                                prev_ch = ch;
+                            }
+                            else
+                            {
+                                EndLine();
+                                prev_ch = 0xffff;
+                                StartLine();
+                            }
+                        }
                         it++;
-                        continue;
                     }
+                    EndLine();
+                    pos.y -= last_gap;
+                };
 
-                    uint16_t ch = u8decode(it);
-
-                    const auto &info = m_ch_map->Get(ch);
-
-                    if (m_kerning)
-                        m_offset.x += m_ch_map->Kerning(prev_ch, ch);
-
-                    Quad_t(queue, m_pos, info.size)
-                        .tex(info.tex_pos)
-                        .alpha(m_alpha).beta(m_beta).color(m_color).mix(0)
-                        .center(info.size.div_x(2)).matrix(m_matrix /mul/ fmat3::translate2D(m_offset + info.offset + ivec2(info.size.x / 2, m_ch_map->Ascent() + info.size.y)));
-
-                    m_offset.x += info.advance + m_spacing;
-                    prev_ch = ch;
-
-                    it++;
+                State saved_state = obj_state;
+                Loop(0);
+                obj_state = std::move(saved_state);
+                if (saved_alignment.y != -1)
+                {
+                    pos.y = -pos.y;
+                    if (saved_alignment.y == 0)
+                        pos.y /= 2;
                 }
+                else
+                    pos.y = 0;
+
+                Loop(1);
             }
 
           public:
-            Text_t(decltype(Poly2D::queue) *queue, const Graphics::CharMap *ch_map, fvec2 pos, std::string_view str) : queue(queue), m_ch_map(ch_map), m_pos(pos), m_str(str) {}
+            Text_t(decltype(Poly2D::queue) *queue, const Graphics::CharMap *ch_map, fvec2 pos, std::string_view str) : queue(queue)
+            {
+                obj_state.pos = pos;
+                obj_state.str = str;
+                obj_state.ch_map = ch_map;
+            }
 
             Text_t(const Text_t &) = delete;
             Text_t &operator=(const Text_t &) = delete;
@@ -616,47 +740,47 @@ namespace Renderers
                 Render();
             }
 
+            ref callback(callback_type c) // Note that if alignment is required, the callback will be called twice for each symbol, first time when calculating the alignment.
+            {
+                obj_state.callback = std::move(c);
+                return (ref)*this;
+            }
+            const State &state() // For use from inside callbacks.
+            {
+                return obj_state;
+            }
+
             ref font(Graphics::CharMap &&) = delete;
             ref font(const Graphics::CharMap &map)
             {
-                m_ch_map = &map;
-                return (ref)*this;
-            }
-            ref move(ivec2 o) // Usual translation.
-            {
-                m_pos += o;
-                return (ref)*this;
-            }
-            ref offset(ivec2 o) // This is not for usual translation, but for moving the first line only (useful for combining) styles.
-            {
-                m_offset += o;
-                return (ref)*this;
-            }
-            ref append(std::string_view str)
-            {
-                Render();
-                m_continue = 1;
-                m_str = str;
-                return (ref)*this;
-            }
-            ref render_this()
-            {
-                ivec2 pos_copy = m_pos;
-                ivec2 offset_copy = m_offset;
-                Render();
-                m_pos = pos_copy;
-                m_offset = offset_copy;
+                obj_state.ch_map = &map;
+                prev_ch = 0xffff; // This resets the kerning.
                 return (ref)*this;
             }
 
+            ref align_h(int a)
+            {
+                obj_state.alignment.x = a;
+                return (ref)*this;
+            }
+            ref align_v(int a)
+            {
+                obj_state.alignment.y = a;
+                return (ref)*this;
+            }
+            ref align(ivec2 a)
+            {
+                obj_state.alignment = a;
+                return (ref)*this;
+            }
             ref matrix(fmat3 m) // Multiplies the matrix by `m`.
             {
-                m_matrix = m_matrix /mul/ m;
+                obj_state.matrix = obj_state.matrix /mul/ m;
                 return (ref)*this;
             }
             ref back_matrix(fmat3 m) // Multiplies `m` by the matrix.
             {
-                m_matrix = m /mul/ m_matrix;
+                obj_state.matrix = m /mul/ obj_state.matrix;
                 return (ref)*this;
             }
             ref matrix(fmat2 m) // Multiplies the matrix by `m`.
@@ -686,27 +810,32 @@ namespace Renderers
             }
             ref color(fvec3 c)
             {
-                m_color = c;
+                obj_state.color = c;
                 return (ref)*this;
             }
             ref alpha(float a)
             {
-                m_alpha = a;
+                obj_state.alpha = a;
                 return (ref)*this;
             }
             ref beta(float b)
             {
-                m_beta = b;
+                obj_state.beta = b;
                 return (ref)*this;
             }
-            ref spacing(float s)
+            ref spacing(int s)
             {
-                m_spacing += s;
+                obj_state.spacing += s;
+                return (ref)*this;
+            }
+            ref line_gap(int g)
+            {
+                obj_state.line_gap += g;
                 return (ref)*this;
             }
             ref kerning(bool k) // Enabled by default
             {
-                m_kerning = k;
+                obj_state.kerning = k;
                 return (ref)*this;
             }
         };
@@ -801,12 +930,13 @@ void main()
             uni.texture = texture;
             uni.texture_size = texture.Size();
         }
-        void SetTexture(const Graphics::Texture &&) = delete;
+        void SetTexture(Graphics::Texture &&) = delete;
 
         void SetDefaultFont(const Graphics::CharMap &map)
         {
             ch_map = &map;
         }
+        void SetDefaultFont(Graphics::CharMap &&) = delete;
 
         Quad_t Quad(fvec2 pos, fvec2 size)
         {

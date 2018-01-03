@@ -2,15 +2,19 @@
 
 #include <iostream>
 
-constexpr ivec2 screen_sz(480,270);
+constexpr ivec2 screen_sz = ivec2(1920,1080)/3;
 
 Events::AutoErrorHandles error_handlers;
+
 Window win("Meow", screen_sz * 2, Window::Settings{}.MinSize(screen_sz).Resizable());
 Timing::TickStabilizer tick_stabilizer(60);
 
-Graphics::Texture texture_main(Graphics::Image("assets/texture.png"), Graphics::Texture::nearest),
+Graphics::Texture texture_main(Graphics::Texture::nearest),
                   texture_fbuf_main(Graphics::Texture::nearest, screen_sz), texture_fbuf_scaled(Graphics::Texture::linear);
 Graphics::FrameBuffer framebuffer_main = nullptr, framebuffer_scaled = nullptr;
+
+Graphics::Font font_object_main;
+Graphics::CharMap font_main;
 
 Renderers::Poly2D r;
 
@@ -69,7 +73,24 @@ int main(int, char **)
     auto Render = [&]
     {
         Graphics::Clear(Graphics::color);
-        r.Quad(mouse.pos(), ivec2(32)).tex(ivec2(0));
+        //r.Quad(mouse.pos(), ivec2(32)).tex(ivec2(0));
+        r.Text(mouse.pos(), "Hello, world!\n1234\n###").callback(
+            [&](uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &info, fmat3 &out_mat)
+            {
+                (void)prev;
+
+                if (ch == '2' || ch == '3')
+                {
+                    float f = std::sin(tick_stabilizer.ticks / 40.) / 2 + 0.5;
+                    int new_advance = iround(info.advance * f);
+                    out_mat = fmat3::scale(fvec2(new_advance / float(info.advance), 1));
+                    info.advance = new_advance;
+                }
+                if (ch == '2')
+                    obj.color({1,0,0});
+                if (ch == '4')
+                    obj.color({1,1,1});
+            }).align_v(1);
     };
 
 
@@ -85,9 +106,17 @@ int main(int, char **)
     };
 
     { // Init
+        Graphics::Image img("assets/texture.png");
+        font_object_main.Create("assets/CatIV15.ttf", 15);
+        Graphics::Font::MakeAtlas(img, ivec2(0), ivec2(256), { {font_object_main, font_main, Graphics::Font::light, Strings::Encodings::cp1251()} });
+        //font_main.EnableLineGap(0);
+
+        texture_main.SetData(img);
+
         r.Create(0x10000);
         r.SetTexture(texture_main);
         r.SetMatrix(fmat4::ortho2D(screen_sz / ivec2(-2,2), screen_sz / ivec2(2,-2)));
+        r.SetDefaultFont(font_main);
 
         Resize();
 
