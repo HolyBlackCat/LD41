@@ -319,7 +319,7 @@ namespace Utils
             void (*copy)(const std::any &from, std::any &to);
             bool (*equal)(const std::any &a, const std::any &b);
             void (*increment)(std::any &iter);
-            std::size_t (*distance)(const std::any &a, const std::any &b);
+            std::ptrdiff_t (*distance)(const std::any &a, const std::any &b);
             T &(*dereference)(const std::any &iter);
         };
 
@@ -344,7 +344,7 @@ namespace Utils
                     {
                         ++std::any_cast<Iter &>(iter);
                     },
-                    [](const std::any &a, const std::any &b) -> std::size_t // distance
+                    [](const std::any &a, const std::any &b) -> std::ptrdiff_t // distance
                     {
                         return std::distance(std::any_cast<const Iter &>(a), std::any_cast<const Iter &>(b));
                     },
@@ -358,6 +358,7 @@ namespace Utils
                 table = &table_storage;
             }
 
+            Iterator() : table(0) {}
             Iterator(const Iterator &other)
             {
                 table = other.table;
@@ -372,12 +373,24 @@ namespace Utils
                 return *this;
             }
 
-            T &operator*() const
+            using value_type = T;
+            using reference  = T &;
+            using pointer    = T *;
+            using difference_type   = std::ptrdiff_t;
+            using iterator_category = std::forward_iterator_tag;
+
+            reference operator*() const
             {
                 return table->dereference(data);
             }
+            pointer operator->() const
+            {
+                return &table->dereference(data);
+            }
             bool operator==(const Iterator &other) const
             {
+                if (table != other.table) return 0;
+                if (table == 0) return 1;
                 return table->equal(data, other.data);
             }
             bool operator!=(const Iterator &other) const
@@ -395,7 +408,7 @@ namespace Utils
                 ++*this;
                 return ret;
             }
-            std::size_t operator-(const Iterator &other) const
+            difference_type operator-(const Iterator &other) const
             {
                 return table->distance(other.data, data);
             }

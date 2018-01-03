@@ -311,7 +311,7 @@ namespace Graphics
             return Image(file, flip_y);
         }
 
-        void SaveToFile(Format format, std::string fname)
+        void SaveToFile(std::string fname, Format format = png)
         {
             int status = 0;
             switch (format)
@@ -326,73 +326,6 @@ namespace Graphics
             if (!status)
                 throw cant_save_image(fname);
         }
-
-        /*
-        struct AtlasFont
-        {
-            const TruetypeFont &ttfont;
-            Font &font;
-            int size; // If non-negative, represents full height measured in pixels. Otherwise represents 'point size' (supposedly height of letter 'M' in pixels).
-            int index;
-            Utils::Range<const int, Utils::contiguous> range; // Chars must fit in [0,0xffff], otherwise bad stuff will happen.
-
-            AtlasFont(const TruetypeFont &ttfont, Font &font, int size, int index, decltype(range) range)
-                : ttfont(ttfont), font(font), size(size), index(index), range(range) {}
-        };
-
-        void CreateFontAtlas(ivec2 pos, ivec2 size, Utils::Range<const AtlasFont> fonts, int alpha_threshold = -1) // Set `alpha_threshold` to -1 to do antialiasing. Otherwise any alpha smaller than this becomes 0, and 255 otherwise.
-        {
-            if ((pos < 0).any() || (pos + size >= Size()).any())
-                throw cant_init_font_atlas("Specified region doesn't fit into the image.", pos, size);
-
-            std::vector<unsigned char> bitmap(size.product());
-
-            stbtt_pack_context pack_con;
-            if (!stbtt_PackBegin(&pack_con, bitmap.data(), size.x, size.y, size.x * sizeof(char), 1, nullptr))
-                throw cant_init_font_atlas("Unable to init packer.", pos, size);
-
-            for (const auto &it : fonts)
-            {
-                std::size_t char_count = it.range.size();
-                const int *char_ptr = &*it.range.begin();
-
-                stbtt_pack_range range{};
-                range.font_size = it.size;
-                range.array_of_unicode_codepoints = const_cast<int *>(char_ptr); // No idea why the stbtt doesn't use a const pointer.
-                range.num_chars = char_count;
-
-                std::vector<stbtt_packedchar> results(char_count);
-                range.chardata_for_range = results.data();
-
-                if (!stbtt_PackFontRanges(&pack_con, (unsigned char *)it.ttfont.Data(), it.index, &range, 1))
-                {
-                    stbtt_PackEnd(&pack_con);
-                    throw not_enough_texture_atlas_space(pos, size);
-                }
-
-                for (std::size_t i = 0; i < char_count; i++)
-                {
-                    const auto &ref = results[i];
-                    Font::Glyph glyph;
-                    glyph.tex_pos = ivec2(ref.x0, ref.y0) + pos;
-                    glyph.size = decltype(glyph.size)(ref.x1 - ref.x0, ref.y1 - ref.y0);
-                    glyph.offset = iround(fvec2(ref.xoff, ref.yoff));
-                    glyph.advance = iround(ref.xadvance);
-                    it.font.Set(char_ptr[i], glyph);
-                }
-            }
-
-            stbtt_PackEnd(&pack_con);
-
-            for (int y = 0; y < size.y; y++)
-            for (int x = 0; x < size.x; x++)
-            {
-                if (alpha_threshold == -1)
-                    data[pos.x + x + (pos.y + y) * width] = u8vec4(255, 255, 255, bitmap[x + y * size.x]);
-                else
-                    data[pos.x + x + (pos.y + y) * width] = u8vec4(255, 255, 255, (bitmap[x + y * size.x] < alpha_threshold ? 0 : 255));
-            }
-        }*/
     };
 
     class CharMap
@@ -673,13 +606,17 @@ namespace Graphics
             Font &font;
             CharMap &map;
             RenderMode mode;
-            Utils::ViewRange<uint16_t> chars;
-            bool kerning = 1; // If this is enabled, the font object must remain alive as long as kerning is used.
+            std::vector<uint16_t> chars;
+            bool kerning; // If this is enabled, the font object must remain alive as long as kerning is used.
+
+            AtlasEntry(Font &font, CharMap &map, RenderMode mode, Utils::ViewRange<uint16_t> char_range, bool kerning = 1)
+                : font(font), map(map), mode(mode), chars(char_range.begin(), char_range.end()), kerning(kerning) {}
         };
 
-        static void MakeAtlas(Image &img, ivec2 pos, ivec2 size, Utils::ViewRange<AtlasEntry> entries)
+        static void MakeAtlas(Image &img, ivec2 pos, ivec2 size, Utils::ViewRange<AtlasEntry> entries_range)
         {
             DebugAssert("A rectange specified for a font atlas doesn't fit into the image.", (pos >= 0).all() && (pos + size <= img.Size()).all());
+            std::vector<AtlasEntry> entries(entries_range.begin(), entries_range.end());
             int ch_count = 0;
             for (const auto &it : entries)
                 ch_count += it.chars.size();
@@ -691,15 +628,24 @@ namespace Graphics
             chars.reserve(ch_count);
             std::vector<stbrp_rect> char_rects;
             char_rects.reserve(ch_count);
-            for (const auto &entry : entries)
-            for (const auto &ch : entry.chars)
+            for (auto &entry : entries)
             {
-                auto font_ch = entry.font.GetChar(ch, entry.mode);
-                stbrp_rect rect;
-                rect.w = font_ch.size.x + 1; // 1 pixel margin
-                rect.h = font_ch.size.y + 1;
-                char_rects.push_back(rect);
-                chars.push_back(std::move(font_ch));
+                auto new_end = std::remove_if(entry.chars.begin(), entry.chars.end(), [&](uint16_t ch){return ch == 0xffff || !entry.font.HasChar(ch);});
+                if (new_end != entry.chars.end())
+                {
+                    entry.chars.erase(new_end, entry.chars.end());
+                    entry.chars.push_back(0xffff);
+                }
+
+                for (const auto &ch : entry.chars)
+                {
+                    auto font_ch = entry.font.GetChar(ch, entry.mode);
+                    stbrp_rect rect;
+                    rect.w = font_ch.size.x + 1; // 1 pixel margin
+                    rect.h = font_ch.size.y + 1;
+                    char_rects.push_back(rect);
+                    chars.push_back(std::move(font_ch));
+                }
             }
             if (!stbrp_pack_rects(&packer_context, char_rects.data(), char_rects.size()))
                 throw not_enough_texture_atlas_space(pos, size);

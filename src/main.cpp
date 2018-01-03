@@ -74,22 +74,22 @@ int main(int, char **)
     {
         Graphics::Clear(Graphics::color);
         //r.Quad(mouse.pos(), ivec2(32)).tex(ivec2(0));
-        r.Text(mouse.pos(), "Hello, world!\n1234\n###").callback(
+        r.Text(mouse.pos(), "Hello, world!\n12""\xff""34\n###").callback(
             [&](uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &info, fmat3 &out_mat)
             {
                 (void)prev;
 
-                if (ch == '2' || ch == '3')
+                if (ch == '2')
+                    obj.color({1,0,0});
+                if (ch == '4')
+                    obj.color({1,1,1});
+                if (obj.state().color == fvec3(1,0,0))
                 {
                     float f = std::sin(tick_stabilizer.ticks / 40.) / 2 + 0.5;
                     int new_advance = iround(info.advance * f);
                     out_mat = fmat3::scale(fvec2(new_advance / float(info.advance), 1));
                     info.advance = new_advance;
                 }
-                if (ch == '2')
-                    obj.color({1,0,0});
-                if (ch == '4')
-                    obj.color({1,1,1});
             }).align_v(1);
     };
 
