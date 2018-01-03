@@ -3,12 +3,14 @@
 
 #include <string>
 
+#include "strings.h"
+
 namespace Program
 {
     void CleanUpOnExit(bool);
 
-    void Exit(int = 0);
-    void Error(std::string, int = 1);
+    [[noreturn]] void Exit(int = 0);
+    [[noreturn]] void Error(std::string, int = 1);
     void SetErrorMessageBoxCaption(std::string);
     void SetErrorMessageBoxPrefix(std::string);
 }
@@ -16,7 +18,7 @@ namespace Program
 #ifdef NDEBUG
 #  define DebugAssert(text_, /*expr*/...) do {} while (0)
 #else
-#  define DebugAssert(text_, /*expr*/...) do {if (!bool(__VA_ARGS__)) ::Program::Error("Assertion failed: " text_);} while (0)
+#  define DebugAssert(text_, /*expr*/...) do {if (!bool(__VA_ARGS__)) ::Program::Error(Str("Assertion failed: ", text_));} while (0)
 #endif
 
 #endif
