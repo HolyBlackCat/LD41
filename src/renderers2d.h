@@ -546,8 +546,15 @@ namespace Renderers
         class Text_t : TemplateUtils::MoveFunc<Text_t>
         {
           public:
-            // Parameter list for callbacks: (uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &info, fmat3 &out_mat)
-            using callback_type = std::function<void(uint16_t ch, uint16_t prev, Text_t &, Graphics::CharMap::Char &, fmat3 &out_mat)>;
+            struct RenderData
+            {
+                fvec3 color = {1,1,1};
+                float alpha = 1, beta = 1;
+                fmat3 matrix = fmat3::identity();
+            };
+
+            // Copy-pastable callback parameters: (bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render)
+            using callback_type = std::function<void(bool render_pass, uint16_t ch, uint16_t prev, Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<RenderData> &render)>;
 
             struct State
             {
@@ -594,7 +601,7 @@ namespace Renderers
 
                 struct Line
                 {
-                    int width, ascent, descent, line_gap;
+                    int width, ascent;
                 };
 
                 ivec2 pos(0);
@@ -603,8 +610,6 @@ namespace Renderers
 
                 auto Loop = [&](bool do_render)
                 {
-                    fmat3 m = fmat3::identity();
-
                     int line_ascent  = obj_state.ch_map->Ascent(),
                         line_descent = obj_state.ch_map->Descent(),
                         line_gap     = obj_state.ch_map->LineGap(),
@@ -629,7 +634,7 @@ namespace Renderers
                         last_spacing = 0;
 
                         if (!do_render)
-                            lines.push_back({pos.x, line_ascent, line_descent, line_gap});
+                            lines.push_back({pos.x, line_ascent});
 
                         pos.y += line_descent + line_gap + line_gap_st;
                         if (!do_render)
@@ -660,11 +665,15 @@ namespace Renderers
 
                                 Graphics::CharMap::Char info = obj_state.ch_map->Get(ch);
 
+                                if (obj_state.kerning)
+                                    pos.x += obj_state.ch_map->Kerning(prev_ch, ch);
+
+                                std::vector<RenderData> render{{obj_state.color, obj_state.alpha, obj_state.beta, obj_state.matrix /mul/ fmat3::translate2D(pos + info.offset)}};
+
                                 if (obj_state.callback)
                                 {
-                                    m = fmat3::identity();
                                     const Graphics::CharMap *ch_map_copy = obj_state.ch_map;
-                                    obj_state.callback(ch, prev_ch, *this, info, m);
+                                    obj_state.callback(do_render, ch, prev_ch, *this, info, render);
                                     if (ch_map_copy != obj_state.ch_map)
                                     {
                                         if (line_ascent < obj_state.ch_map->Ascent())
@@ -678,15 +687,15 @@ namespace Renderers
                                         line_gap_st = obj_state.line_gap;
                                 }
 
-                                if (obj_state.kerning)
-                                    pos.x += obj_state.ch_map->Kerning(prev_ch, ch);
-
                                 if (do_render)
                                 {
-                                    Quad_t(saved_queue, obj_state.pos, info.size)
-                                        .tex(info.tex_pos)
-                                        .alpha(obj_state.alpha).beta(obj_state.beta).color(obj_state.color).mix(0)
-                                        .center(ivec2(0)).matrix(obj_state.matrix /mul/ fmat3::translate2D(pos + info.offset) /mul/ m);
+                                    for (const auto &it : render)
+                                    {
+                                        Quad_t(saved_queue, obj_state.pos, info.size)
+                                            .tex(info.tex_pos)
+                                            .alpha(it.alpha).beta(it.beta).color(it.color).mix(0)
+                                            .center(ivec2(0)).matrix(it.matrix);
+                                    }
                                 }
 
                                 pos.x += info.advance + (last_spacing = obj_state.spacing);

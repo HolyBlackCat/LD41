@@ -74,22 +74,36 @@ int main(int, char **)
     {
         Graphics::Clear(Graphics::color);
         //r.Quad(mouse.pos(), ivec2(32)).tex(ivec2(0));
-        r.Text(mouse.pos(), "Hello, world!\n12""\xff""34\n###").callback(
-            [&](uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &info, fmat3 &out_mat)
+        r.Text(mouse.pos(), "Hello, world!\nYou are {[not] }alone\n1234\n###").callback(
+            [&, pos = 0](bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render) mutable
             {
+                (void)render;
                 (void)prev;
 
-                if (ch == '2')
-                    obj.color({1,0,0});
-                if (ch == '4')
-                    obj.color({1,1,1});
+                if (ch == '{' || ch == '}')
+                {
+                    if (ch == '{')
+                        obj.color({1,0,0});
+                    else
+                        obj.color({1,1,1});
+                    glyph.advance = 0;
+                    render = {};
+                }
                 if (obj.state().color == fvec3(1,0,0))
                 {
                     float f = std::sin(tick_stabilizer.ticks / 40.) / 2 + 0.5;
-                    int new_advance = iround(info.advance * f);
-                    out_mat = fmat3::scale(fvec2(new_advance / float(info.advance), 1));
-                    info.advance = new_advance;
+                    int new_advance = iround(glyph.advance * f);
+                    if (render_pass && render.size())
+                    {
+                        render[0].matrix = render[0].matrix /mul/ fmat3::scale(fvec2(new_advance / float(glyph.advance), 1));
+                        render.push_back(render[0]);
+                        render[0].matrix = render[0].matrix /mul/ fmat3::translate2D(fvec2(0,1));
+                        render[0].color /= 3;
+                    }
+                    glyph.advance = new_advance;
                 }
+
+                pos++;
             }).align_v(1);
     };
 
