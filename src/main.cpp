@@ -15,7 +15,9 @@ Graphics::Texture texture_main(Graphics::Texture::nearest),
 Graphics::FrameBuffer framebuffer_main = nullptr, framebuffer_scaled = nullptr;
 
 Graphics::Font font_object_main;
+Graphics::Font font_object_tiny;
 Graphics::CharMap font_main;
+Graphics::CharMap font_tiny;
 
 Renderers::Poly2D r;
 
@@ -55,6 +57,46 @@ void main()
 namespace Draw
 {
     ivec2 scaled_size;
+
+    void Resize()
+    {
+        float scale = (win.Size() / fvec2(screen_sz)).min();
+        Draw::scaled_size = iround(screen_sz * scale) * 2 / 2;
+        float scale_fl = floor(scale);
+        ivec2 scaled_size_fl = iround(screen_sz * scale_fl) * 2 / 2;
+        texture_fbuf_scaled.SetData(scaled_size_fl);
+        mouse.offset = win.Size() / 2;
+        mouse.scale = screen_sz.x / float(Draw::scaled_size.x);
+    }
+
+    void Init()
+    {
+        static bool once = 1;
+        if (once) once = 0;
+        else Program::Error("Draw::Init() was called twice.");
+
+        Graphics::Image img("assets/texture.png");
+        font_object_main.Create("assets/CatIV15.ttf", 15);
+        font_object_tiny.Create("assets/CatTiny11.ttf", 11);
+        Graphics::Font::MakeAtlas(img, ivec2(0), ivec2(256),
+        {
+            {font_object_main, font_main, Graphics::Font::light, Strings::Encodings::cp1251()},
+            {font_object_tiny, font_tiny, Graphics::Font::light, Strings::Encodings::cp1251()},
+        });
+        //font_main.EnableLineGap(0);
+
+        texture_main.SetData(img);
+
+        r.Create(0x10000);
+        r.SetTexture(texture_main);
+        r.SetMatrix(fmat4::ortho2D(screen_sz / ivec2(-2,2), screen_sz / ivec2(2,-2)));
+        r.SetDefaultFont(font_main);
+
+        Resize();
+
+        framebuffer_main  .Attach(texture_fbuf_main);
+        framebuffer_scaled.Attach(texture_fbuf_scaled);
+    }
 
     void FullscreenQuad()
     {
@@ -219,8 +261,64 @@ class Map
     }
 };
 
+class TestObject
+{
+    ivec2 pos = ivec2(0);
+  public:
+    void Tick(Scenes::Scene &)
+    {
+        pos = mouse.pos();
+    }
+    void Render(Scenes::Scene &)
+    {
+        r.Text(mouse.pos(), "Hello, world!\nYou are {[not] }alone\n1234\n###").callback(
+            [&, pos = 0](bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render) mutable
+            {
+                (void)render;
+                (void)prev;
+
+                if (ch == '{' || ch == '}')
+                {
+                    if (ch == '{')
+                        obj.color({1,0,0});
+                    else
+                        obj.color({1,1,1});
+                    glyph.advance = 0;
+                    render = {};
+                }
+                if (obj.state().color == fvec3(1,0,0))
+                {
+                    float f = std::sin(tick_stabilizer.ticks / 40.) / 2 + 0.5;
+                    int new_advance = iround(glyph.advance * f);
+                    if (render_pass && render.size())
+                    {
+                        render[0].matrix = render[0].matrix /mul/ fmat3::scale(fvec2(new_advance / float(glyph.advance), 1));
+                        render.push_back(render[0]);
+                        render[0].matrix = render[0].matrix /mul/ fmat3::translate2D(fvec2(0,1));
+                        render[0].color /= 3;
+                    }
+                    glyph.advance = new_advance;
+                }
+
+                pos++;
+            }).align_v(1);
+    }
+};
+
+namespace Scenes
+{
+    using Game = Scenes::SceneTemplate<Scenes::value_list<&TestObject::Tick>,
+                                       Scenes::value_list<&TestObject::Render>>;
+}
+
+std::unique_ptr<Scenes::Scene> scene = std::make_unique<Scenes::Game>();
+
 int main(int, char **)
 {
+    Draw::Init();
+
+    scene->GetContainer<TestObject>().push_back({});
+
     TileSheet tile_sheet(ivec2(32), ivec2(0,512));
     Map map(tile_sheet, ivec2(11,7));
 
@@ -230,6 +328,8 @@ int main(int, char **)
             map.AddTile(map.layer_front, div_ex(mouse.pos(), tile_size), 0);
         if (mouse.right.pressed())
             map.RemoveTile(map.layer_front, div_ex(mouse.pos(), tile_size), map.front);;
+
+        scene->Tick();
     };
     auto Render = [&]
     {
@@ -240,69 +340,8 @@ int main(int, char **)
 
 //        r.Quad(mouse.pos(), ivec2(32)).tex(ivec2(0));
 
-//        r.Text(mouse.pos(), "Hello, world!\nYou are {[not] }alone\n1234\n###").callback(
-//            [&, pos = 0](bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render) mutable
-//            {
-//                (void)render;
-//                (void)prev;
-//
-//                if (ch == '{' || ch == '}')
-//                {
-//                    if (ch == '{')
-//                        obj.color({1,0,0});
-//                    else
-//                        obj.color({1,1,1});
-//                    glyph.advance = 0;
-//                    render = {};
-//                }
-//                if (obj.state().color == fvec3(1,0,0))
-//                {
-//                    float f = std::sin(tick_stabilizer.ticks / 40.) / 2 + 0.5;
-//                    int new_advance = iround(glyph.advance * f);
-//                    if (render_pass && render.size())
-//                    {
-//                        render[0].matrix = render[0].matrix /mul/ fmat3::scale(fvec2(new_advance / float(glyph.advance), 1));
-//                        render.push_back(render[0]);
-//                        render[0].matrix = render[0].matrix /mul/ fmat3::translate2D(fvec2(0,1));
-//                        render[0].color /= 3;
-//                    }
-//                    glyph.advance = new_advance;
-//                }
-//
-//                pos++;
-//            }).align_v(1);
+        scene->Render();
     };
-
-
-    auto Resize = [&]
-    {
-        float scale = (win.Size() / fvec2(screen_sz)).min();
-        Draw::scaled_size = iround(screen_sz * scale) * 2 / 2;
-        float scale_fl = floor(scale);
-        ivec2 scaled_size_fl = iround(screen_sz * scale_fl) * 2 / 2;
-        texture_fbuf_scaled.SetData(scaled_size_fl);
-        mouse.offset = win.Size() / 2;
-        mouse.scale = screen_sz.x / float(Draw::scaled_size.x);
-    };
-
-    { // Init
-        Graphics::Image img("assets/texture.png");
-        font_object_main.Create("assets/CatIV15.ttf", 15);
-        Graphics::Font::MakeAtlas(img, ivec2(0), ivec2(256), { {font_object_main, font_main, Graphics::Font::light, Strings::Encodings::cp1251()} });
-        //font_main.EnableLineGap(0);
-
-        texture_main.SetData(img);
-
-        r.Create(0x10000);
-        r.SetTexture(texture_main);
-        r.SetMatrix(fmat4::ortho2D(screen_sz / ivec2(-2,2), screen_sz / ivec2(2,-2)));
-        r.SetDefaultFont(font_main);
-
-        Resize();
-
-        framebuffer_main  .Attach(texture_fbuf_main);
-        framebuffer_scaled.Attach(texture_fbuf_scaled);
-    }
 
     uint64_t frame_start = Timing::Clock(), frame_delta;
 
@@ -318,7 +357,7 @@ int main(int, char **)
             if (win.size_changed)
             {
                 win.size_changed = 0;
-                Resize();
+                Draw::Resize();
             }
             Tick();
         }

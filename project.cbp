@@ -117,6 +117,7 @@
 		<Unit filename="src/program.h" />
 		<Unit filename="src/reflection.h" />
 		<Unit filename="src/renderers2d.h" />
+		<Unit filename="src/scenes.h" />
 		<Unit filename="src/strings.cpp" />
 		<Unit filename="src/strings.h" />
 		<Unit filename="src/template_utils.h" />
