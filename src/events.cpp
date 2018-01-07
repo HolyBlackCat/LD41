@@ -244,7 +244,7 @@ namespace Events
                 break;
 
               case SDL_MOUSEWHEEL:
-                Input::mouse_vecs.Accumulate(Input::vec_mouse_wheel, {event.wheel.x, event.wheel.y});
+                Input::mouse_vecs.Accumulate(Input::vec_mouse_wheel, {event.wheel.x, -event.wheel.y});
                 break;
 
               case SDL_WINDOWEVENT:
@@ -282,7 +282,7 @@ namespace Events
                 Program::Error("Signal: Illegal instruction.", sig);
                 break;
               case SIGSEGV:
-                Program::Error("Signal: Segmentation failure.", sig);
+                Program::Error("Signal: Segmentation fault.", sig);
                 break;
             }
         };

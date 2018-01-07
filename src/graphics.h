@@ -143,13 +143,13 @@ namespace Graphics
         {
             glClear(bits);
         }
-        inline void SetClearColor(fvec4 c)
+        inline void ClearColor(fvec4 c)
         {
             glClearColor(c.r, c.g, c.b, c.a);
         }
-        inline void SetClearColor(fvec3 c)
+        inline void ClearColor(fvec3 c)
         {
-            SetClearColor(c.to_vec4(1));
+            ClearColor(c.to_vec4(1));
         }
 
         inline void Viewport(ivec2 pos, ivec2 size)
@@ -260,7 +260,7 @@ namespace Graphics
         {
             data[pos.x + pos.y * width] = color;
         }
-        u8vec4 FastGet(ivec2 pos) // No bounds checking.
+        u8vec4 FastGet(ivec2 pos) const // No bounds checking.
         {
             return data[pos.x + pos.y * width];
         }

@@ -1,5 +1,6 @@
 #include "everything.h"
 
+#include <bitset>
 #include <iostream>
 
 constexpr ivec2 screen_sz = ivec2(1920,1080)/3;
@@ -10,6 +11,7 @@ Events::AutoErrorHandles error_handlers;
 Window win("Meow", screen_sz * 2, Window::Settings{}.MinSize(screen_sz).Resizable());
 Timing::TickStabilizer tick_stabilizer(60);
 
+Graphics::Image textureimage_main("assets/texture.png");
 Graphics::Texture texture_main(Graphics::Texture::nearest),
                   texture_fbuf_main(Graphics::Texture::nearest, screen_sz), texture_fbuf_scaled(Graphics::Texture::linear);
 Graphics::FrameBuffer framebuffer_main = nullptr, framebuffer_scaled = nullptr;
@@ -21,6 +23,7 @@ Graphics::CharMap font_tiny;
 
 Renderers::Poly2D r;
 
+namespace Keys = Input::Keys;
 Input::Mouse mouse;
 
 namespace Shaders
@@ -75,17 +78,20 @@ namespace Draw
         if (once) once = 0;
         else Program::Error("Draw::Init() was called twice.");
 
-        Graphics::Image img("assets/texture.png");
+        Graphics::ClearColor(fvec3(0));
+        Graphics::Blending::Enable();
+        Graphics::Blending::FuncNormalPre();
+
         font_object_main.Create("assets/CatIV15.ttf", 15);
         font_object_tiny.Create("assets/CatTiny11.ttf", 11);
-        Graphics::Font::MakeAtlas(img, ivec2(0), ivec2(256),
+        Graphics::Font::MakeAtlas(textureimage_main, ivec2(0,256), ivec2(256,256),
         {
             {font_object_main, font_main, Graphics::Font::light, Strings::Encodings::cp1251()},
             {font_object_tiny, font_tiny, Graphics::Font::light, Strings::Encodings::cp1251()},
         });
         //font_main.EnableLineGap(0);
 
-        texture_main.SetData(img);
+        texture_main.SetData(textureimage_main);
 
         r.Create(0x10000);
         r.SetTexture(texture_main);
@@ -112,235 +118,320 @@ class TileSheet
     ivec2 size;
     ivec2 tex_pos;
 
-  public:
-    TileSheet(ivec2 size, ivec2 tex_pos) : size(size), tex_pos(tex_pos) {}
+    using mask_t = std::bitset<tile_size * tile_size>;
+    std::vector<mask_t> masks;
 
-    ivec2 GetTileTexPos(int id)
+  public:
+    TileSheet(const Graphics::Image &image, ivec2 size, ivec2 tex_pos) : size(size), tex_pos(tex_pos), masks(size.product())
+    {
+        for (int i = 0; i < size.product(); i++)
+        {
+            ivec2 tex_pos = TileTexPos(i);
+            auto &mask = masks[i];
+            for (int y = 0; y < tile_size; y++)
+            for (int x = 0; x < tile_size; x++)
+            {
+                if (image.FastGet(tex_pos + ivec2(x,y)).a == 255)
+                    mask.set(x + y * tile_size);
+            }
+        }
+    }
+
+    ivec2 TexPos() const
+    {
+        return tex_pos;
+    }
+    ivec2 Size() const
+    {
+        return size;
+    }
+
+    ivec2 TileTexPos(int id) const
     {
         DebugAssert("Tile id is out of range.", id >= 0 && id < size.product());
         return ivec2(id / size.y, id % size.y) * tile_size + tex_pos;
     }
+
+    bool TileObscuresTile(int big_id, int small_id) const
+    {
+        auto &big = masks[big_id], &small = masks[small_id];
+        return (small & big) == small;
+    }
 };
+TileSheet tilesheet_main(textureimage_main, ivec2(32), ivec2(0,512));
 
-class Map
+namespace Objects
 {
-  public:
-    enum LayerEnum
+    class Camera
     {
-        layer_back, layer_front
-    };
-    enum RemoveTileMode
-    {
-        front, back, all
-    };
-
-  private:
-    static constexpr int segment_size = 4;
-
-    struct Tile
-    {
-        int id;
+      public:
         ivec2 pos;
+
+        Camera(ivec2 pos) : pos(pos) {}
     };
 
-    struct Segment
+    class Map
     {
-        std::vector<Tile> tiles;
-    };
-
-    struct Layer
-    {
-        ivec2 size = ivec2(0);
-        int seg_pitch = 0;
-        std::vector<Segment> segments;
-
-              Segment &GetSeg(ivec2 seg_pos)       {return segments[seg_pos.x + seg_pos.y * seg_pitch];}
-        const Segment &GetSeg(ivec2 seg_pos) const {return segments[seg_pos.x + seg_pos.y * seg_pitch];}
-    };
-
-    TileSheet *tile_sheet = 0;
-    Layer la_back, la_front;
-
-    const Layer &GetLayer(LayerEnum layer) const
-    {
-        switch (layer)
+      public:
+        enum LayerEnum
         {
-            case layer_back : return la_back ;
-            case layer_front: return la_front;
-        }
-        Program::Error("Invalid layer enum.");
-    }
-    Layer &GetLayer(LayerEnum layer)
-    {
-        return (Layer &) ((const Map &)*this).GetLayer(layer);
-    }
+            back, front
+        };
 
-  public:
-    Map() {}
-    Map(TileSheet &sheet, ivec2 size) : tile_sheet(&sheet)
-    {
-        ivec2 seg_size = (size + segment_size - 1) / segment_size;
-        int seg_count = seg_size.product();
-        for (auto layer : {&la_back, &la_front})
-        {
-            layer->size = size;
-            layer->seg_pitch = seg_size.x;
-            layer->segments.resize(seg_count);
-        }
-    }
+      private:
+        static constexpr int segment_size = 4;
 
-    void AddTile(LayerEnum layer, ivec2 pos, int id)
-    {
-        auto &la = GetLayer(layer);
-        if ((pos < 0).any() || (pos >= la.size).any())
-            return;
-        la.GetSeg(pos / segment_size).tiles.push_back(Tile{id, pos});
-    }
-    void RemoveTile(LayerEnum layer, ivec2 pos, RemoveTileMode mode, int id = -1)
-    {
-        auto &la = GetLayer(layer);
-        if ((pos < 0).any() || (pos >= la.size).any())
-            return;
-        auto &seg = la.GetSeg(pos / segment_size);
-        switch (mode)
+        struct Tile
         {
-          case front:
-          case all:
+            int id;
+            ivec2 pos;
+        };
+
+        struct Segment
+        {
+            std::vector<Tile> tiles;
+        };
+
+        struct Layer
+        {
+            ivec2 size = ivec2(0);
+            int seg_pitch = 0;
+            std::vector<Segment> segments;
+
+                  Segment &GetSeg(ivec2 seg_pos)       {return segments[seg_pos.x + seg_pos.y * seg_pitch];}
+            const Segment &GetSeg(ivec2 seg_pos) const {return segments[seg_pos.x + seg_pos.y * seg_pitch];}
+        };
+
+        TileSheet *tile_sheet = 0;
+        Layer la_back, la_front;
+
+        const Layer &GetLayer(LayerEnum layer) const
+        {
+            switch (layer)
             {
-                auto it = seg.tiles.begin();
-                while (it != seg.tiles.end())
+                case back : return la_back ;
+                case front: return la_front;
+            }
+            Program::Error("Invalid layer enum.");
+        }
+        Layer &GetLayer(LayerEnum layer)
+        {
+            return (Layer &) ((const Map &)*this).GetLayer(layer);
+        }
+
+      public:
+        Map() {}
+        Map(TileSheet &sheet, ivec2 size) : tile_sheet(&sheet)
+        {
+            ivec2 seg_size = (size + segment_size - 1) / segment_size;
+            int seg_count = seg_size.product();
+            for (auto layer : {&la_back, &la_front})
+            {
+                layer->size = size;
+                layer->seg_pitch = seg_size.x;
+                layer->segments.resize(seg_count);
+            }
+        }
+
+        const TileSheet &TileSheet() const
+        {
+            return *tile_sheet;
+        }
+
+        void AddTile(LayerEnum layer, ivec2 pos, int id) // If the new tile obscures some of the old ones, they are removed.
+        {
+            auto &la = GetLayer(layer);
+            if ((pos < 0).any() || (pos >= la.size).any())
+                return;
+            auto &tiles = la.GetSeg(pos / segment_size).tiles;
+            auto it = tiles.begin();
+            while (it != tiles.end())
+            {
+                if (it->pos == pos)
                 {
-                    if (it->pos == pos && (id == -1 || id == it->id))
+                    if (tile_sheet->TileObscuresTile(id, it->id))
                     {
-                        if (mode == front)
-                        {
-                            seg.tiles.erase(it);
-                            return;
-                        }
-                        it = seg.tiles.erase(it);
+                        it = tiles.erase(it);
                         continue;
                     }
-                    it++;
                 }
+                it++;
             }
-            break;
-          case back:
-            {
-                auto it = seg.tiles.rbegin();
-                while (it != seg.tiles.rend())
-                {
-                    if (it->pos == pos && (id == -1 || id == it->id))
-                    {
-                        seg.tiles.erase(it.base()-1);
-                        return;
-                    }
-                    it++;
-                }
-            }
-            break;
+            tiles.push_back(Tile{id, pos});
         }
-    }
-
-    void Render(LayerEnum layer, ivec2 camera_pos, ivec2 half_extent) const
-    {
-        auto &la = GetLayer(layer);
-        ivec2 first_seg = div_ex((camera_pos - half_extent), segment_size),
-              last_seg  = div_ex((camera_pos + half_extent), segment_size),
-              max_seg   = (la.size - 1) / segment_size;
-
-        first_seg = clamp(first_seg, ivec2(0), max_seg);
-        last_seg  = clamp(last_seg , ivec2(0), max_seg);
-
-        for (int y = first_seg.y; y <= last_seg.y; y++)
-        for (int x = first_seg.x; x <= last_seg.x; x++)
-        for (const auto &tile : la.GetSeg({x,y}).tiles)
+        void RemoveTile(LayerEnum layer, ivec2 pos, bool remove_all = 0)
         {
-            DebugAssert(Str("Tile at ", tile.pos, " is incorrectly placed into segment ", ivec2(x,y), "."), (tile.pos >= ivec2(x,y) * segment_size).all() && (tile.pos < (ivec2(x,y) + 1) * segment_size).all());
-            r.Quad(tile.pos * tile_size - camera_pos, ivec2(tile_size)).tex(tile_sheet->GetTileTexPos(tile.id));
-        }
-    }
-};
-
-class TestObject
-{
-    ivec2 pos = ivec2(0);
-  public:
-    void Tick(Scenes::Scene &)
-    {
-        pos = mouse.pos();
-    }
-    void Render(Scenes::Scene &)
-    {
-        r.Text(mouse.pos(), "Hello, world!\nYou are {[not] }alone\n1234\n###").callback(
-            [&, pos = 0](bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render) mutable
+            auto &la = GetLayer(layer);
+            if ((pos < 0).any() || (pos >= la.size).any())
+                return;
+            auto &tiles = la.GetSeg(pos / segment_size).tiles;
+            auto it = tiles.end();
+            while (it != tiles.begin())
             {
-                (void)render;
-                (void)prev;
-
-                if (ch == '{' || ch == '}')
+                it--;
+                if (it->pos == pos)
                 {
-                    if (ch == '{')
-                        obj.color({1,0,0});
-                    else
-                        obj.color({1,1,1});
-                    glyph.advance = 0;
-                    render = {};
+                    it = tiles.erase(it);
+                    if (!remove_all)
+                        return;
                 }
-                if (obj.state().color == fvec3(1,0,0))
+            }
+        }
+
+        void Render(const Scene &scene, LayerEnum layer) const
+        {
+            auto camera_ptr = scene.GetOpt<Camera>();
+            ivec2 camera_pos;
+            if (camera_ptr)
+                camera_pos = camera_ptr->pos;
+            else
+                camera_pos = ivec2(0);
+            constexpr ivec2 half_extent = screen_sz / 2;
+            auto &la = GetLayer(layer);
+            ivec2 first_seg = div_ex((camera_pos - half_extent), segment_size),
+                  last_seg  = div_ex((camera_pos + half_extent), segment_size),
+                  max_seg   = (la.size - 1) / segment_size;
+
+            first_seg = clamp(first_seg, ivec2(0), max_seg);
+            last_seg  = clamp(last_seg , ivec2(0), max_seg);
+
+            for (int y = first_seg.y; y <= last_seg.y; y++)
+            for (int x = first_seg.x; x <= last_seg.x; x++)
+            for (const auto &tile : la.GetSeg({x,y}).tiles)
+            {
+                DebugAssert(Str("Tile at ", tile.pos, " is incorrectly placed into segment ", ivec2(x,y), "."), (tile.pos >= ivec2(x,y) * segment_size).all() && (tile.pos < (ivec2(x,y) + 1) * segment_size).all());
+                r.Quad(tile.pos * tile_size - camera_pos, ivec2(tile_size)).tex(tile_sheet->TileTexPos(tile.id));
+            }
+        }
+    };
+
+    class MapEditor
+    {
+        bool selecting_tile = 0;
+        float selecting_tile_alpha = 0;
+      public:
+        void Tick(const Scene &scene)
+        {
+            auto &map = scene.Get<Map>();
+
+            if (mouse.wheel().y > 0)
+                selecting_tile = 1;
+            if (mouse.wheel().y < 0)
+                selecting_tile = 0;
+
+            selecting_tile_alpha = clamp(selecting_tile_alpha + (selecting_tile ? 1 : -1) * 0.12, 0, 1);
+
+
+            if (mouse.left.pressed())
+                map.AddTile(Map::front, div_ex(mouse.pos(), tile_size), 0);
+            if (mouse.right.pressed())
+                map.RemoveTile(Map::front, div_ex(mouse.pos(), tile_size), Keys::l_ctrl.down());
+        }
+        void Render(const Scene &scene)
+        {
+            (void)scene;
+            auto &map = scene.Get<Map>();
+
+            if (selecting_tile_alpha)
+            {
+                // Background
+                ivec2 half_extent_tiles = (screen_sz / 2 + tile_size - 1) / tile_size;
+                for (int y = -half_extent_tiles.y; y < half_extent_tiles.y; y++)
+                for (int x = -half_extent_tiles.x; x < half_extent_tiles.x; x++)
+                    r.Quad(ivec2(x,y) * tile_size, ivec2(tile_size)).tex({0,0}).alpha(selecting_tile_alpha);
+
+                // Tile sheet
+                ivec2 tilesheet_offset = -max((map.TileSheet().Size() * tile_size - screen_sz).max()/2, 0) * (fvec2(mouse.pos()) / (screen_sz.min()/2)) - map.TileSheet().Size() * tile_size/2;
+                r.Quad(tilesheet_offset, map.TileSheet().Size() * tile_size).tex(map.TileSheet().TexPos()).alpha(selecting_tile_alpha);
+            }
+        }
+    };
+
+    class TestObject
+    {
+        ivec2 pos = ivec2(0);
+      public:
+        void Tick()
+        {
+            pos = mouse.pos();
+        }
+        void Render()
+        {
+            r.Text(mouse.pos(), "Hello, world!\nYou are {[not] }alone\n1234\n###").callback(
+                [&, pos = 0](bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render) mutable
                 {
-                    float f = std::sin(tick_stabilizer.ticks / 40.) / 2 + 0.5;
-                    int new_advance = iround(glyph.advance * f);
-                    if (render_pass && render.size())
+                    (void)prev;
+
+                    if (ch == '{' || ch == '}')
                     {
-                        render[0].matrix = render[0].matrix /mul/ fmat3::scale(fvec2(new_advance / float(glyph.advance), 1));
-                        render.push_back(render[0]);
-                        render[0].matrix = render[0].matrix /mul/ fmat3::translate2D(fvec2(0,1));
-                        render[0].color /= 3;
+                        if (ch == '{')
+                            obj.color({1,0,0});
+                        else
+                            obj.color({1,1,1});
+                        glyph.advance = 0;
+                        render = {};
                     }
-                    glyph.advance = new_advance;
-                }
+                    if (obj.state().color == fvec3(1,0,0))
+                    {
+                        float f = std::sin(tick_stabilizer.ticks / 40.) / 2 + 0.5;
+                        int new_advance = iround(glyph.advance * f);
+                        if (render_pass && render.size())
+                        {
+                            render[0].matrix = render[0].matrix /mul/ fmat3::scale(fvec2(new_advance / float(glyph.advance), 1));
+                            render.push_back(render[0]);
+                            render[0].matrix = render[0].matrix /mul/ fmat3::translate2D(fvec2(0,1));
+                            render[0].color /= 3;
+                        }
+                        glyph.advance = new_advance;
+                    }
 
-                pos++;
-            }).align_v(1);
-    }
-};
+                    pos++;
+                }).align_v(1);
+        }
+    };
+}
 
 namespace Scenes
 {
-    using Game = Scenes::SceneTemplate<Scenes::value_list<&TestObject::Tick>,
-                                       Scenes::value_list<&TestObject::Render>>;
+    using namespace Objects;
+
+    const Scene game = []
+    {
+        Scene s;
+        s.Add<Camera>(ivec2(0));
+        s.Add<Map>(tilesheet_main, ivec2(11,7));
+        if (1) s.Add<MapEditor>();
+        s.Add<TestObject>();
+        s.SetTick([](const Scene &s)
+        {
+            if (auto ptr = s.GetOpt<MapEditor>()) ptr->Tick(s);
+            s.Get<TestObject>().Tick();
+        });
+        s.SetRender([](const Scene &s)
+        {
+            s.Get<Map>().Render(s, Map::back);
+            s.Get<Map>().Render(s, Map::front);
+            if (auto ptr = s.GetOpt<MapEditor>()) ptr->Render(s);
+            s.Get<TestObject>().Render();
+        });
+        return s;
+    }();
 }
 
-std::unique_ptr<Scenes::Scene> scene = std::make_unique<Scenes::Game>();
+Scene current_scene = Scenes::game;
 
 int main(int, char **)
 {
     Draw::Init();
 
-    scene->GetContainer<TestObject>().push_back({});
-
-    TileSheet tile_sheet(ivec2(32), ivec2(0,512));
-    Map map(tile_sheet, ivec2(11,7));
-
     auto Tick = [&]
     {
-        if (mouse.left.pressed())
-            map.AddTile(map.layer_front, div_ex(mouse.pos(), tile_size), 0);
-        if (mouse.right.pressed())
-            map.RemoveTile(map.layer_front, div_ex(mouse.pos(), tile_size), map.front);;
-
-        scene->Tick();
+        current_scene.Tick();
     };
     auto Render = [&]
     {
         Graphics::Clear(Graphics::color);
-
-        map.Render(map.layer_back , ivec2(0), screen_sz/2);
-        map.Render(map.layer_front, ivec2(0), screen_sz/2);
-
-//        r.Quad(mouse.pos(), ivec2(32)).tex(ivec2(0));
-
-        scene->Render();
+        current_scene.Render();
     };
 
     uint64_t frame_start = Timing::Clock(), frame_delta;
