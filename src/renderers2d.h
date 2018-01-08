@@ -553,7 +553,7 @@ namespace Renderers
                 fmat3 matrix = fmat3::identity();
             };
 
-            // Copy-pastable callback parameters: (bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render)
+            // Copyable callback parameters: (bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render)
             using callback_type = std::function<void(bool render_pass, uint16_t ch, uint16_t prev, Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<RenderData> &render)>;
 
             struct State
@@ -568,6 +568,7 @@ namespace Renderers
                 fvec3 color = {1,1,1};
                 float alpha = 1, beta = 1;
                 int spacing = 0, line_gap = 0;
+                int tab_width = 4; // Measured in spaces
                 bool kerning = 1;
                 callback_type callback;
             };
@@ -615,6 +616,7 @@ namespace Renderers
                         line_gap     = obj_state.ch_map->LineGap(),
                         line_gap_st  = obj_state.line_gap;
                     int last_spacing = 0, last_gap = 0;
+                    int line_offset_x = 0;
 
                     auto StartLine = [&]
                     {
@@ -627,6 +629,8 @@ namespace Renderers
                                 pos.x /= 2;
                         }
                         pos.y += lines[line_number].ascent;
+
+                        line_offset_x = pos.x;
                     };
                     auto EndLine = [&]
                     {
@@ -659,55 +663,68 @@ namespace Renderers
                     {
                         if (u8isfirstbyte(it))
                         {
-                            if (*it != '\n')
+                            switch (*it)
                             {
-                                uint16_t ch = u8decode(it);
-
-                                Graphics::CharMap::Char info = obj_state.ch_map->Get(ch);
-
-                                if (obj_state.kerning)
-                                    pos.x += obj_state.ch_map->Kerning(prev_ch, ch);
-
-                                std::vector<RenderData> render{{obj_state.color, obj_state.alpha, obj_state.beta, obj_state.matrix /mul/ fmat3::translate2D(pos + info.offset)}};
-
-                                if (obj_state.callback)
+                              default:
                                 {
-                                    const Graphics::CharMap *ch_map_copy = obj_state.ch_map;
-                                    obj_state.callback(do_render, ch, prev_ch, *this, info, render);
-                                    if (ch_map_copy != obj_state.ch_map)
-                                    {
-                                        if (line_ascent < obj_state.ch_map->Ascent())
-                                            line_ascent = obj_state.ch_map->Ascent();
-                                        if (line_descent < obj_state.ch_map->Descent())
-                                            line_descent = obj_state.ch_map->Descent();
-                                        if (line_gap < obj_state.ch_map->LineGap())
-                                            line_gap = obj_state.ch_map->LineGap();
-                                    }
-                                    if (line_gap_st > obj_state.line_gap)
-                                        line_gap_st = obj_state.line_gap;
-                                }
+                                    uint16_t ch = u8decode(it);
 
-                                if (do_render)
+                                    Graphics::CharMap::Char info = obj_state.ch_map->Get(ch);
+
+                                    if (obj_state.kerning)
+                                        pos.x += obj_state.ch_map->Kerning(prev_ch, ch);
+
+                                    std::vector<RenderData> render{{obj_state.color, obj_state.alpha, obj_state.beta, obj_state.matrix /mul/ fmat3::translate2D(pos + info.offset)}};
+
+                                    if (obj_state.callback)
+                                    {
+                                        const Graphics::CharMap *ch_map_copy = obj_state.ch_map;
+                                        obj_state.callback(do_render, ch, prev_ch, *this, info, render);
+                                        if (ch_map_copy != obj_state.ch_map)
+                                        {
+                                            if (line_ascent < obj_state.ch_map->Ascent())
+                                                line_ascent = obj_state.ch_map->Ascent();
+                                            if (line_descent < obj_state.ch_map->Descent())
+                                                line_descent = obj_state.ch_map->Descent();
+                                            if (line_gap < obj_state.ch_map->LineGap())
+                                                line_gap = obj_state.ch_map->LineGap();
+                                        }
+                                        if (line_gap_st > obj_state.line_gap)
+                                            line_gap_st = obj_state.line_gap;
+                                    }
+
+                                    if (do_render)
+                                    {
+                                        for (const auto &it : render)
+                                        {
+                                            Quad_t(saved_queue, obj_state.pos, info.size)
+                                                .tex(info.tex_pos)
+                                                .alpha(it.alpha).beta(it.beta).color(it.color).mix(0)
+                                                .center(ivec2(0)).matrix(it.matrix);
+                                        }
+                                    }
+
+                                    pos.x += info.advance + (last_spacing = obj_state.spacing);
+
+                                    prev_ch = ch;
+                                }
+                                break;
+                              case '\n':
                                 {
-                                    for (const auto &it : render)
-                                    {
-                                        Quad_t(saved_queue, obj_state.pos, info.size)
-                                            .tex(info.tex_pos)
-                                            .alpha(it.alpha).beta(it.beta).color(it.color).mix(0)
-                                            .center(ivec2(0)).matrix(it.matrix);
-                                    }
+                                    EndLine();
+                                    prev_ch = 0xffff;
+                                    StartLine();
                                 }
-
-                                pos.x += info.advance + (last_spacing = obj_state.spacing);
-
-                                prev_ch = ch;
+                                break;
+                              case '\t':
+                                {
+                                    int tab_pixels = obj_state.tab_width * obj_state.ch_map->Get(' ').advance;
+                                    pos.x = (pos.x - line_offset_x + tab_pixels - 1) / tab_pixels * tab_pixels;
+                                    prev_ch = '\t';
+                                }
+                                break;
                             }
-                            else
-                            {
-                                EndLine();
-                                prev_ch = 0xffff;
-                                StartLine();
-                            }
+
                         }
                         it++;
                     }
@@ -842,9 +859,20 @@ namespace Renderers
                 obj_state.line_gap += g;
                 return (ref)*this;
             }
+            ref tab_width(int w)
+            {
+                obj_state.tab_width = w;
+                return (ref)*this;
+            }
             ref kerning(bool k) // Enabled by default
             {
                 obj_state.kerning = k;
+                return (ref)*this;
+            }
+
+            template <typename F> ref preset(F &&func) // void func(Text_t &ref)
+            {
+                func(*this);
                 return (ref)*this;
             }
         };

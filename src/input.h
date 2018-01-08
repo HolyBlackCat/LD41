@@ -56,10 +56,10 @@ namespace Input
         DeviceType device_type;
         DeviceID device_id;
 
-      public:
         ivec2 offset = ivec2(0);
         float scale = 1;
 
+      public:
         Mouse(DeviceType device_type, DeviceID device_id)
           : device_type(device_type), device_id(device_id),
             left      {device_type, 0, 1},
@@ -75,17 +75,16 @@ namespace Input
         [[nodiscard]] Key button(int index) const;
 
         [[nodiscard]] ivec2 pos() const;
-        [[nodiscard]] ivec2 rel_pos() const;
+        [[nodiscard]] ivec2 shift() const;
         [[nodiscard]] ivec2 wheel() const;
 
-        static void Show(bool s)
-        {
-            SDL_ShowCursor(s);
-        }
-        static void Relative(bool r)
-        {
-            SDL_SetRelativeMouseMode((SDL_bool)r);
-        }
+        [[nodiscard]] ivec2 raw_pos() const; // Like `pos()`, but in unmapped coordinates.
+        [[nodiscard]] ivec2 rel_pos() const; // Like `shift()`, but in unmapped coordinates. Should be used in relative mode instead of `shift()`.
+
+        void Transform(ivec2 new_offset, float new_scale);
+
+        static void Show(bool s);
+        static void Relative(bool r);
     };
 
 

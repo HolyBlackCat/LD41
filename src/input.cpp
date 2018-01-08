@@ -66,9 +66,29 @@ namespace Input
         return {device_type, device_id, index};
     }
 
+    void Mouse::Transform(ivec2 new_offset, float new_scale)
+    {
+        offset = new_offset;
+        scale  = new_scale;
+    }
+
     ivec2 Mouse::pos() const
     {
-        return iround((Events::Input::Vector(device_type, device_id, Events::Input::vec_mouse_pos) - offset) * scale);
+        return iround((raw_pos() - offset) * scale);
+    }
+    ivec2 Mouse::shift() const
+    {
+        return pos() - iround((raw_pos() - rel_pos() - offset) * scale);
+    }
+    ivec2 Mouse::wheel() const
+    {
+        if (Events::Input::VectorTime(device_type, device_id, Events::Input::vec_mouse_wheel) != Events::Time())
+            return {};
+        return Events::Input::Vector(device_type, device_id, Events::Input::vec_mouse_wheel);
+    }
+    ivec2 Mouse::raw_pos() const
+    {
+        return Events::Input::Vector(device_type, device_id, Events::Input::vec_mouse_pos);
     }
     ivec2 Mouse::rel_pos() const
     {
@@ -76,10 +96,13 @@ namespace Input
             return {};
         return Events::Input::Vector(device_type, device_id, Events::Input::vec_mouse_pos_rel);
     }
-    ivec2 Mouse::wheel() const
+
+    void Mouse::Show(bool s)
     {
-        if (Events::Input::VectorTime(device_type, device_id, Events::Input::vec_mouse_wheel) != Events::Time())
-            return {};
-        return Events::Input::Vector(device_type, device_id, Events::Input::vec_mouse_wheel);
+        SDL_ShowCursor(s);
+    }
+    void Mouse::Relative(bool r)
+    {
+        SDL_SetRelativeMouseMode((SDL_bool)r);
     }
 }

@@ -6,7 +6,7 @@
 #include <sstream>
 
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
-#define VERSION "2.5.6"
+#define VERSION "2.5.7"
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
 
 std::ofstream out_file("mat.h");
@@ -1652,8 +1652,8 @@ template <typename T, typename Min, typename Max> [[nodiscard]] constexpr T clam
 static_assert(std::is_arithmetic_v<T> &&
               std::is_arithmetic_v<Min> &&
               std::is_arithmetic_v<Max>, "Non arithmetic arguments make no sense for this function.");
-if (val < min) return min;
 if (val > max) return max;
+if (val < min) return min;
 return val;
 }
 template <typename T, unsigned int D, typename Min, typename Max> [[nodiscard]] constexpr vec<D,T> clamp(const vec<D,T> &val, Min min, Max max)
@@ -1666,6 +1666,15 @@ return val.apply(clamp<base_type_t<v>, base_type_t<Min>, base_type_t<Max>>, chan
 template <typename T> [[nodiscard]] constexpr T clamp(T val)
 {
 return clamp(val, 0, 1);
+}
+
+template <typename T, typename Min, typename Max> constexpr void clamp_assign(T &val, Min min, Max max)
+{
+val = clamp(val, min, max);
+}
+template <typename T, typename Min, typename Max> constexpr void clamp_assign(T &val)
+{
+val = clamp(val);
 }
 
 template <typename T> [[nodiscard]] constexpr change_base_type_t<T,int> sign(T val)

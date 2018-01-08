@@ -1,7 +1,7 @@
 #ifndef MAT_H_INCLUDED
 #define MAT_H_INCLUDED
 
-// Version 2.5.6 by HolyBlackCat
+// Version 2.5.7 by HolyBlackCat
 
 #include <algorithm>
 #include <cctype>
@@ -2193,8 +2193,8 @@ namespace Math
             static_assert(std::is_arithmetic_v<T> &&
                           std::is_arithmetic_v<Min> &&
                           std::is_arithmetic_v<Max>, "Non arithmetic arguments make no sense for this function.");
-            if (val < min) return min;
             if (val > max) return max;
+            if (val < min) return min;
             return val;
         }
         template <typename T, unsigned int D, typename Min, typename Max> [[nodiscard]] constexpr vec<D,T> clamp(const vec<D,T> &val, Min min, Max max)
@@ -2207,6 +2207,15 @@ namespace Math
         template <typename T> [[nodiscard]] constexpr T clamp(T val)
         {
             return clamp(val, 0, 1);
+        }
+
+        template <typename T, typename Min, typename Max> constexpr void clamp_assign(T &val, Min min, Max max)
+        {
+            val = clamp(val, min, max);
+        }
+        template <typename T, typename Min, typename Max> constexpr void clamp_assign(T &val)
+        {
+            val = clamp(val);
         }
 
         template <typename T> [[nodiscard]] constexpr change_base_type_t<T,int> sign(T val)
