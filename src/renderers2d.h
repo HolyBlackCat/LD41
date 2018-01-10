@@ -149,8 +149,8 @@ namespace Renderers
 
                 out[0].pos = -m_center;
                 out[2].pos = m_size - m_center;
-                out[1].pos = {out[0].pos.x, out[2].pos.y};
-                out[3].pos = {out[2].pos.x, out[0].pos.y};
+                out[1].pos = {out[2].pos.x, out[0].pos.y};
+                out[3].pos = {out[0].pos.x, out[2].pos.y};
 
                 if (has_matrix)
                 {
@@ -165,8 +165,8 @@ namespace Renderers
 
                 out[0].texture_pos = m_tex_pos;
                 out[2].texture_pos = m_tex_pos + m_tex_size;
-                out[1].texture_pos = {out[0].texture_pos.x, out[2].texture_pos.y};
-                out[3].texture_pos = {out[2].texture_pos.x, out[0].texture_pos.y};
+                out[1].texture_pos = {out[2].texture_pos.x, out[0].texture_pos.y};
+                out[3].texture_pos = {out[0].texture_pos.x, out[2].texture_pos.y};
 
                 queue->Quad(out[0], out[1], out[2], out[3]);
             }
