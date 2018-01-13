@@ -2,6 +2,7 @@
 #define STRINGS_H_INCLUDED
 
 #include <algorithm>
+#include <cstddef>
 #include <iomanip>
 #include <string>
 #include <string_view>
@@ -128,6 +129,23 @@ namespace Strings
               case 3:
                 return ((*str & 0b0000'1111) << 12) | ((str[1] & 0b0011'1111) << 6) | (str[2] & 0b0011'1111);
             }
+        }
+
+        [[nodiscard]] inline bool u8valid16(std::string_view str)
+        {
+            std::size_t len = 0;
+            for (char it : str)
+            {
+                std::size_t cur_len = u8charlen(it);
+                if (cur_len > 3)
+                    return 0;
+                if (bool(cur_len) == bool(len))
+                    return 0;
+                if (cur_len)
+                    len = cur_len;
+                len--;
+            }
+            return 1;
         }
     }
 

@@ -30,6 +30,8 @@ namespace Events
 
         ivec2 Vector(DeviceType, DeviceID, VecIndex);
         Time_t VectorTime(DeviceType, DeviceID, VecIndex);
+
+        const std::string &Text();
     }
 
     void Process();

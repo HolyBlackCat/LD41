@@ -199,6 +199,14 @@ namespace Events
         {
             return GetVectors(device, id).GetTime(v_index);
         }
+
+
+        static std::string text_input;
+
+        const std::string &Text()
+        {
+            return text_input;
+        }
     }
 
     void Process()
@@ -210,6 +218,8 @@ namespace Events
         tick_counter++;
 
         SDL_Event event;
+
+        Input::text_input = {};
 
         while (SDL_PollEvent(&event))
         {
@@ -259,6 +269,10 @@ namespace Events
                         ptr->size_changed = 1;
                     break;
                 }
+                break;
+
+              case SDL_TEXTINPUT:
+                Input::text_input += event.text.text;
                 break;
             }
         }

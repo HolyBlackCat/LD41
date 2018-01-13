@@ -671,6 +671,8 @@ namespace Reflection
 
             if (Interface::container_size(object))
                 ret[ret.size()-1] = ']';
+            else
+                ret.push_back(']');
 
             return ret;
         }

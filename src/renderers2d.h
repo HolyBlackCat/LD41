@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <vector>
 #include <utility>
 
 #include "graphics.h"
@@ -553,13 +554,24 @@ namespace Renderers
                 fmat3 matrix = fmat3::identity();
             };
 
-            // Copyable callback parameters: (bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render)
-            using callback_type = std::function<void(bool render_pass, uint16_t ch, uint16_t prev, Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<RenderData> &render)>;
+            // Copyable callback parameters:
+            struct CallbackParams
+            {
+                bool render_pass;
+                int index;
+                uint16_t ch, prev;
+                Text_t &obj;
+                Graphics::CharMap::Char &glyph;
+                std::vector<RenderData> &render;
+                ivec2 pos;
+            };
+
+            using callback_type = std::function<void(const CallbackParams &)>;
 
             struct State
             {
                 // The constructor sets those:
-                fvec2 pos;
+                fvec2 pos; // This is dynamically adjusted during drawing.
                 std::string_view str;
                 const Graphics::CharMap *ch_map;
 
@@ -570,7 +582,7 @@ namespace Renderers
                 int spacing = 0, line_gap = 0;
                 int tab_width = 4; // Measured in spaces
                 bool kerning = 1;
-                callback_type callback;
+                std::vector<callback_type> callbacks;
             };
 
           private:
@@ -657,6 +669,31 @@ namespace Renderers
                             line_number++;
                     };
 
+                    int index = 0;
+
+                    auto CallCallbacks = [&](uint16_t ch, Graphics::CharMap::Char &info, std::vector<RenderData> &render)
+                    {
+                        if (obj_state.callbacks.size())
+                        {
+                            const Graphics::CharMap *ch_map_copy = obj_state.ch_map;
+
+                            for (const auto &callback : obj_state.callbacks)
+                                callback({do_render, index, ch, prev_ch, *this, info, render, obj_state.pos + pos});
+
+                            if (ch_map_copy != obj_state.ch_map)
+                            {
+                                if (line_ascent < obj_state.ch_map->Ascent())
+                                    line_ascent = obj_state.ch_map->Ascent();
+                                if (line_descent < obj_state.ch_map->Descent())
+                                    line_descent = obj_state.ch_map->Descent();
+                                if (line_gap < obj_state.ch_map->LineGap())
+                                    line_gap = obj_state.ch_map->LineGap();
+                            }
+                            if (line_gap_st > obj_state.line_gap)
+                                line_gap_st = obj_state.line_gap;
+                        }
+                    };
+
                     StartLine();
                     auto it = obj_state.str.begin();
                     while (it != obj_state.str.end())
@@ -676,22 +713,7 @@ namespace Renderers
 
                                     std::vector<RenderData> render{{obj_state.color, obj_state.alpha, obj_state.beta, obj_state.matrix /mul/ fmat3::translate2D(pos + info.offset)}};
 
-                                    if (obj_state.callback)
-                                    {
-                                        const Graphics::CharMap *ch_map_copy = obj_state.ch_map;
-                                        obj_state.callback(do_render, ch, prev_ch, *this, info, render);
-                                        if (ch_map_copy != obj_state.ch_map)
-                                        {
-                                            if (line_ascent < obj_state.ch_map->Ascent())
-                                                line_ascent = obj_state.ch_map->Ascent();
-                                            if (line_descent < obj_state.ch_map->Descent())
-                                                line_descent = obj_state.ch_map->Descent();
-                                            if (line_gap < obj_state.ch_map->LineGap())
-                                                line_gap = obj_state.ch_map->LineGap();
-                                        }
-                                        if (line_gap_st > obj_state.line_gap)
-                                            line_gap_st = obj_state.line_gap;
-                                    }
+                                    CallCallbacks(ch, info, render);
 
                                     if (do_render)
                                     {
@@ -724,10 +746,15 @@ namespace Renderers
                                 }
                                 break;
                             }
-
+                            index++;
                         }
                         it++;
                     }
+
+                    std::vector<RenderData> tmp_render{{obj_state.color, obj_state.alpha, obj_state.beta, fmat3::identity()}};
+                    auto tmp_info = obj_state.ch_map->Get('\0');
+                    CallCallbacks('\0', tmp_info, tmp_render);
+
                     EndLine();
                     pos.y -= last_gap;
                 };
@@ -766,9 +793,9 @@ namespace Renderers
                 Render();
             }
 
-            ref callback(callback_type c) // Note that if alignment is required, the callback will be called twice for each symbol, first time when calculating the alignment.
+            ref callback(callback_type c) // These can be chained. Note that if alignment is required, the callback will be called twice for each symbol, first time when calculating the alignment.
             {
-                obj_state.callback = std::move(c);
+                obj_state.callbacks.emplace_back(std::move(c));
                 return (ref)*this;
             }
             const State &state() // For use from inside callbacks.

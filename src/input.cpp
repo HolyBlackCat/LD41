@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <limits>
 
+#include "mat.h"
+#include "strings.h"
+
 
 namespace Input
 {
@@ -104,5 +107,84 @@ namespace Input
     void Mouse::Relative(bool r)
     {
         SDL_SetRelativeMouseMode((SDL_bool)r);
+    }
+
+
+    static int text_cursor_pos = 0, text_cursor_byte_pos = 0;
+
+    std::string RawText()
+    {
+        if (u8valid16(Events::Input::Text()))
+            return Events::Input::Text();
+        else
+            return "";
+    }
+    void Text(std::string *str, int len_cap)
+    {
+        static std::string *last_str = 0;
+        if (str != last_str)
+        {
+            last_str = str;
+            if (str)
+            {
+                text_cursor_pos = u8strlen(*str);
+                text_cursor_byte_pos = str->size();
+            }
+            else
+            {
+                text_cursor_pos = 0;
+                text_cursor_byte_pos = 0;
+            }
+        }
+        if (str)
+        {
+            std::string &ref = *str;
+            std::string text = RawText();
+
+            if (!u8valid16(ref))
+                ref = {};
+
+            int old_len = u8strlen(ref);
+            clamp_assign(text_cursor_pos += Keys::right.repeated() - Keys::left.repeated(), 0, old_len);
+
+            text_cursor_byte_pos = 0;
+            int index = 0;
+            while (1)
+            {
+                if (u8isfirstbyte(ref[text_cursor_byte_pos]))
+                {
+                    if (index == text_cursor_pos)
+                        break;
+                    index++;
+                }
+                text_cursor_byte_pos++;
+            }
+
+            if (Keys::del.repeated() && text_cursor_pos < old_len)
+            {
+                ref = ref.substr(0, text_cursor_byte_pos) + ref.substr(text_cursor_byte_pos + u8charlen(ref[text_cursor_byte_pos]));
+            }
+            if (Keys::backspace.repeated() && text_cursor_pos > 0)
+            {
+                while (!u8isfirstbyte(ref[--text_cursor_byte_pos])) {}
+                ref = ref.substr(0, text_cursor_byte_pos) + ref.substr(text_cursor_byte_pos + u8charlen(ref[text_cursor_byte_pos]));
+                text_cursor_pos--;
+            }
+
+            if (text.size() && std::find(text.begin(), text.end(), '\n') == text.end() && (len_cap < 0 || u8strlen(ref) + u8strlen(text) <= len_cap))
+            {
+                ref = ref.substr(0, text_cursor_byte_pos) + text + ref.substr(text_cursor_byte_pos);
+                text_cursor_byte_pos += text.size();
+                text_cursor_pos += u8strlen(text);
+            }
+        }
+    }
+    int TextCursorPos()
+    {
+        return text_cursor_pos;
+    }
+    int TextCursorBytePos()
+    {
+        return text_cursor_byte_pos;
     }
 }

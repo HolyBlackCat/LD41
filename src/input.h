@@ -1,6 +1,7 @@
 #ifndef INPUT_H_INCLUDED
 #define INPUT_H_INCLUDED
 
+#include <string>
 #include <vector>
 
 #include <SDL2/SDL.h>
@@ -87,6 +88,14 @@ namespace Input
         static void Relative(bool r);
     };
 
+    std::string RawText(); // This checks if the input is valid utf8 and can be represented using 16 bits per char.
+
+    // It remembers the address of the last passed string and resets internal cursor position if it changes. Null can be used to reset too.
+    // Line-feeds will never be added to the `str`.
+    void Text(std::string *str, int len_cap = -1);
+
+    int TextCursorPos(); // The cursor should be drawn before or under the characther with returned index.
+    int TextCursorBytePos();
 
     namespace Keys
     {
@@ -138,10 +147,10 @@ namespace Input
         KEY(backspace    , BACKSPACE   )
         KEY(insert       , INSERT      )
         KEY(del          , DELETE      )
-        KEY(arrow_up     , UP          )
-        KEY(arrow_down   , DOWN        )
-        KEY(arrow_left   , LEFT        )
-        KEY(arrow_right  , RIGHT       )
+        KEY(up           , UP          )
+        KEY(down         , DOWN        )
+        KEY(left         , LEFT        )
+        KEY(right        , RIGHT       )
         KEY(page_up      , PAGEUP      )
         KEY(page_down    , PAGEDOWN    )
         KEY(home         , HOME        )

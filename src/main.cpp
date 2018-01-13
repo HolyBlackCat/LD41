@@ -112,37 +112,48 @@ namespace Draw
 {
     inline namespace TextPresets
     {
-        void TinyWithBlackOutline(Renderers::Poly2D::Text_t &obj)
+        void TinyWithBlackOutline(Renderers::Poly2D::Text_t &obj) // Is a preset
         {
             obj.color(fvec3(1)).font(font_tiny)
-               .callback([](bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render)
+               .callback([](Renderers::Poly2D::Text_t::CallbackParams params)
             {
-                (void)ch;
-                (void)prev;
-                (void)obj;
-                (void)glyph;
-
-                if (render_pass)
+                if (params.render_pass && params.render.size())
                 {
                     constexpr ivec2 offset_list[]{{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1},{0,-1},{1,-1}};
-                    auto copy = render[0];
+                    auto copy = params.render[0];
                     fvec3 saved_color = copy.color;
                     float saved_alpha = copy.alpha;
                     copy.color = fvec3(0);
                     copy.alpha *= 0.6;
-                    render.clear();
+                    params.render.clear();
                     for (ivec2 offset : offset_list)
                     {
                         auto tmp = copy;
                         tmp.matrix.z.x += offset.x;
                         tmp.matrix.z.y += offset.y;
-                        render.push_back(tmp);
+                        params.render.push_back(tmp);
                     }
                     copy.color = saved_color;
                     copy.alpha = saved_alpha;
-                    render.push_back(copy);
+                    params.render.push_back(copy);
                 }
             });
+        }
+
+        auto WithCursor(int index, fvec3 color = fvec3(tick_stabilizer.ticks % 60 < 30)) // Returns a preset
+        {
+            return [=](Renderers::Poly2D::Text_t &obj)
+            {
+                obj.callback([&](Renderers::Poly2D::Text_t::CallbackParams params)
+                {
+                    constexpr int width = 1;
+                    if (params.render_pass && params.index == index)
+                    {
+                        r.Quad(params.pos - ivec2(width, params.obj.state().ch_map->Ascent()), ivec2(1, params.obj.state().ch_map->Height()))
+                         .color(color).alpha(params.render[0].alpha).beta(params.render[0].beta);
+                    }
+                });
+            };
         }
     }
 
@@ -258,34 +269,48 @@ namespace Objects
 
         struct Tile
         {
-            int id;
-            ivec2 pos;
+            Reflect(Tile)
+            (
+                (int)(id),
+                (ivec2)(pos),
+            )
         };
 
         struct Segment
         {
-            std::vector<Tile> tiles;
+            Reflect(Segment)
+            (
+                (std::vector<Tile>)(tiles),
+            )
         };
 
         struct Layer
         {
-            ivec2 size = ivec2(0);
-            int seg_pitch = 0;
-            std::vector<Segment> segments;
+            Reflect(Layer)
+            (
+                (ivec2)(size)(= ivec2(0)),
+                (int)(seg_pitch)(= 0),
+                (std::vector<Segment>)(segments),
+            )
 
                   Segment &GetSeg(ivec2 seg_pos)       {return segments[seg_pos.x + seg_pos.y * seg_pitch];}
             const Segment &GetSeg(ivec2 seg_pos) const {return segments[seg_pos.x + seg_pos.y * seg_pitch];}
         };
 
         TileSheet *tile_sheet = 0;
-        Layer la_back, la_front;
+
+        ReflectStruct(Data, (
+            (Layer)(la_back, la_front),
+        ))
+
+        Data data;
 
         const Layer &GetLayer(LayerEnum layer) const
         {
             switch (layer)
             {
-                case back : return la_back ;
-                case front: return la_front;
+                case back : return data.la_back ;
+                case front: return data.la_front;
             }
             Program::Error("Invalid layer enum.");
         }
@@ -300,7 +325,7 @@ namespace Objects
         {
             ivec2 seg_size = (size + segment_size - 1) / segment_size;
             int seg_count = seg_size.product();
-            for (auto layer : {&la_back, &la_front})
+            for (auto layer : {&data.la_back, &data.la_front})
             {
                 layer->size = size;
                 layer->seg_pitch = seg_size.x;
@@ -315,7 +340,7 @@ namespace Objects
 
         ivec2 Size()
         {
-            return la_back.size;
+            return data.la_back.size;
         }
 
         void AddTile(LayerEnum layer, ivec2 pos, int id) // If the new tile obscures some of the old ones, they are removed.
@@ -407,6 +432,16 @@ namespace Objects
                 r.Quad(tile.pos * tile_size - cam.pos, ivec2(tile_size)).tex(tile_sheet->TileTexPos(tile.id));
             }
         }
+
+        bool SaveToFile(std::string fname)
+        {
+            std::string text = Reflection::to_string(data);
+            std::ofstream out(fname);
+            if (!out) return 0;
+            out << text;
+            if (!out) return 0;
+            return 1;
+        }
     };
 
     class MapEditor
@@ -460,7 +495,7 @@ namespace Objects
 
         void Tick(const Scene &scene)
         {
-            if (Keys::tab.pressed())
+            if (Keys::grave.pressed())
                 Enable(scene, !enabled);
             if (!enabled)
                 return;
@@ -468,15 +503,18 @@ namespace Objects
             auto &map = scene.Get<Map>();
             auto &cam = scene.Get<Camera>();
 
-            { // Reloading textures if needed
+            { // Reload textures if needed
                 if (Keys::f5.pressed())
                     Draw::ReloadTextures();
             }
 
             { // Open/close tile sheet
-                if (mouse.wheel().y > 0 && !map_selection_button_down)
+                if (!selecting_tiles && Keys::tab.pressed() && !map_selection_button_down)
+                {
                     selecting_tiles = 1;
-                if (mouse.wheel().y < 0 && !selecting_tiles_button_down)
+                    current_mode = Mode::copy;
+                }
+                else if (selecting_tiles && Keys::tab.pressed() && !selecting_tiles_button_down)
                     selecting_tiles = 0;
                 selecting_tiles_alpha = clamp(selecting_tiles_alpha + (selecting_tiles ? 1 : -1) * 0.12, 0, 1);
             }
@@ -542,12 +580,25 @@ namespace Objects
             {
                 { // Switching modes
                     Mode prev_mode = current_mode;
-                    if (Keys::_1.pressed())
+
+                    if (Keys::q.pressed())
+                    {
                         current_mode = Mode::copy;
-                    if (Keys::_2.pressed())
-                        current_mode = Mode::erase;
-                    if (Keys::_3.pressed())
-                        current_mode = Mode::select;
+                    }
+                    if (Keys::e.pressed())
+                    {
+                        if (current_mode != Mode::erase)
+                            current_mode = Mode::erase;
+                        else
+                            current_mode = Mode::copy;
+                    }
+                    if (Keys::r.pressed())
+                    {
+                        if (current_mode != Mode::select)
+                            current_mode = Mode::select;
+                        else
+                            current_mode = Mode::copy;
+                    }
 
                     if (current_mode != prev_mode)
                     {
@@ -559,11 +610,18 @@ namespace Objects
                     }
                 }
 
-                mouse_pos = div_ex(mouse.pos() + cam.pos, tile_size);
-                map_selection_map_hovered = (mouse_pos >= 0).all() && (mouse_pos < map.Size()).all();
+                bool mouse_pos_changed = 0;
+                { // Calculating hovered tile
+                    ivec2 mouse_pos_prev = mouse_pos;
+                    mouse_pos = div_ex(mouse.pos() + cam.pos, tile_size);
+                    if (mouse_pos != mouse_pos_prev)
+                        mouse_pos_changed = 1;
+
+                    map_selection_map_hovered = (mouse_pos >= 0).all() && (mouse_pos < map.Size()).all();
+                }
 
                 // Selecting map region
-                if (grabbed_tiles.empty() && mouse.left.pressed() && map_selection_map_hovered)
+                if (grabbed_tiles.empty() && mouse.right.pressed() && map_selection_map_hovered)
                 {
                     map_selection_button_down = 1;
                     map_selection_start = clamp(mouse_pos, 0, map.Size()-1);
@@ -576,7 +634,7 @@ namespace Objects
                     if (!map_selection_multiple_tiles && map_selection_end != map_selection_start)
                         map_selection_multiple_tiles = 1;
 
-                    if (mouse.left.released())
+                    if (mouse.right.released())
                     {
                         map_selection_button_down = 0;
 
@@ -605,11 +663,7 @@ namespace Objects
                             }
                             break;
                           case Mode::erase:
-                            if (!map_selection_multiple_tiles)
-                            {
-                                map.RemoveTile(target_layer, a);
-                            }
-                            else
+                            if (map_selection_multiple_tiles)
                             {
                                 for (int y = a.y; y <= b.y; y++)
                                 for (int x = a.x; x <= b.x; x++)
@@ -621,7 +675,7 @@ namespace Objects
                 }
 
                 // Moving and placing grabbed tiles
-                if (grabbed_tiles.size())
+                if (current_mode == Mode::copy && grabbed_tiles.size())
                 {
                     ivec2 base_offset_prev = grabbed_tiles_base_offset;
                     grabbed_tiles_base_offset = div_ex(-grabbed_tiles_size * tile_size/2 + mouse.pos() + cam.pos + tile_size/2, tile_size);
@@ -633,6 +687,12 @@ namespace Objects
                     if (mouse.right.pressed())
                         grabbed_tiles = {};
                 }
+
+                // Erasing
+                if ((current_mode == Mode::copy || current_mode == Mode::erase) && mouse.left.down() && grabbed_tiles.empty() &&
+                    !map_selection_button_down && (mouse_pos_changed || mouse.left.pressed()) && map_selection_map_hovered)
+                    map.RemoveTile(target_layer, mouse_pos);
+
 
 
                 /*
@@ -768,9 +828,9 @@ namespace Objects
                 if (show_help)
                 {
                     if (selecting_tiles)
-                        bottom_right = "WASD to move\nHold LMB to select\nWHEEL UP to close\nF5 to reload textures\n";
+                        bottom_right = "WASD to move\nHold LMB to select\nTAB to close\nF5 to reload textures\n";
                     else
-                        bottom_right = "WASD to move\n(hold SHIFT for slow speed)\n(hold CTRL for fast speed)\nWHEEL DOWN to open tile sheet\n1,2,3 to change modes\nF5 to reload textures\n";
+                        bottom_right = "WASD to move\n(hold SHIFT for slow speed)\n(hold CTRL for fast speed)\nTAB to open tile sheet\nRMB to select tiles\nLMB to draw or erase\nQ,E,R to change modes\nF5 to reload textures\n";
                     bottom_right += "F1 to hide this text";
                 }
                 else
@@ -803,46 +863,16 @@ namespace Objects
 
     class TestObject
     {
-        ivec2 pos = ivec2(0);
+        std::string str = "Hello, world!";
       public:
-        void Tick()
+        void Tick(const Scene &scene)
         {
-            return;
-            pos = mouse.pos();
+            ""; if (Keys::space.pressed())
+                scene.Get<Map>().SaveToFile("out.txt");
         }
-        void Render()
+        void Render(const Scene &scene)
         {
-            return;
-            r.Text(mouse.pos(), "Hello, world!\nYou are {[not] }alone\n1234\n###").callback(
-                [&, pos = 0](bool render_pass, uint16_t ch, uint16_t prev, Renderers::Poly2D::Text_t &obj, Graphics::CharMap::Char &glyph, std::vector<Renderers::Poly2D::Text_t::RenderData> &render) mutable
-                {
-                    (void)prev;
-
-                    if (ch == '{' || ch == '}')
-                    {
-                        if (ch == '{')
-                            obj.color({1,0,0});
-                        else
-                            obj.color({1,1,1});
-                        glyph.advance = 0;
-                        render = {};
-                    }
-                    if (obj.state().color == fvec3(1,0,0))
-                    {
-                        float f = std::sin(tick_stabilizer.ticks / 40.) / 2 + 0.5;
-                        int new_advance = iround(glyph.advance * f);
-                        if (render_pass && render.size())
-                        {
-                            render[0].matrix = render[0].matrix /mul/ fmat3::scale(fvec2(new_advance / float(glyph.advance), 1));
-                            render.push_back(render[0]);
-                            render[0].matrix = render[0].matrix /mul/ fmat3::translate2D(fvec2(0,1));
-                            render[0].color /= 3;
-                        }
-                        glyph.advance = new_advance;
-                    }
-
-                    pos++;
-                }).align_v(1);
+            (void)scene;
         }
     };
 }
@@ -861,6 +891,8 @@ namespace Scenes
         s.Add<Map>(tilesheet_main, ivec2(26,15));
         if (map_editor) s.Add<MapEditor>();
 
+        s.Add<TestObject>();
+
         s.Get<Camera>().pos = s.Get<Map>().Size() * tile_size / 2;
         if (map_editor) s.Get<MapEditor>().Enable(s);
 
@@ -868,6 +900,8 @@ namespace Scenes
         {
             s.Get<Background>().Tick();
             if (auto ptr = s.GetOpt<MapEditor>()) ptr->Tick(s);
+
+            s.Get<TestObject>().Tick(s);
         });
         s.SetRender([](const Scene &s)
         {
@@ -875,6 +909,8 @@ namespace Scenes
             s.Get<Map>().Render(s, Map::back);
             s.Get<Map>().Render(s, Map::front);
             if (auto ptr = s.GetOpt<MapEditor>()) ptr->Render(s);
+
+            s.Get<TestObject>().Render(s);
         });
         return s;
     }();
