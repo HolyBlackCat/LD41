@@ -1458,12 +1458,12 @@ namespace Reflection
     using GenericRefl::ParsingErrorContext;
     using namespace GenericRefl::Enums;
 
-    template <typename T> bool from_string(T &ref, const std::string &str, FromStringMode edit = overwrite, GenericRefl::ParsingErrorContextRef con = 0) // If `edit == edit`, then there will be no errors on missing field initializers.
+    template <typename T> bool from_string(T &ref, const char *str, FromStringMode edit = overwrite, GenericRefl::ParsingErrorContextRef con = 0) // If `edit == edit`, then there will be no errors on missing field initializers.
     {
-        std::size_t len = Generic(ref).from_string(str.c_str(), edit, con);
+        std::size_t len = Generic(ref).from_string(str, edit, con);
         if (len == 0)
             return 0;
-        if (Strings::skip_whitespace(str.c_str() + len) != &*str.end())
+        if (*Strings::skip_whitespace(str + len) != '\0')
         {
             con.error_expected_end();
             return 0;

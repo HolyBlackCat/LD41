@@ -15,8 +15,10 @@
 #include <vector>
 
 #include <SDL2/SDL_endian.h>
+#include <zlib.h>
 
 #include "exceptions.h"
+#include "reflection.h"
 #include "template_utils.h"
 
 namespace Utils
@@ -302,163 +304,167 @@ namespace Utils
     };
 
 
-    namespace impl
+    inline namespace Ranges
     {
-        template <typename T, typename = void> struct has_contiguous_storage : std::false_type {};
-        template <typename T> struct has_contiguous_storage<T, std::void_t<decltype(std::data(std::declval<const T &>()))>> : std::true_type {};
+        namespace impl
+        {
+            template <typename T, typename = void> struct has_contiguous_storage : std::false_type {};
+            template <typename T> struct has_contiguous_storage<T, std::void_t<decltype(std::data(std::declval<const T &>()))>> : std::true_type {};
 
-        template <typename T, typename = void> struct has_std_size : std::false_type {};
-        template <typename T> struct has_std_size<T, std::void_t<decltype(std::size(std::declval<const T &>()))>> : std::true_type {};
+            template <typename T, typename = void> struct has_std_size : std::false_type {};
+            template <typename T> struct has_std_size<T, std::void_t<decltype(std::size(std::declval<const T &>()))>> : std::true_type {};
+        }
+
+        enum Storage {any, contiguous};
+
+        template <typename T, Storage S = any> class Range
+        {
+            struct FuncTable
+            {
+                void (*copy)(const std::any &from, std::any &to);
+                bool (*equal)(const std::any &a, const std::any &b);
+                void (*increment)(std::any &iter);
+                std::ptrdiff_t (*distance)(const std::any &a, const std::any &b);
+                T &(*dereference)(const std::any &iter);
+            };
+
+            class Iterator
+            {
+                std::any data;
+                const FuncTable *table;
+              public:
+                template <typename Iter> Iterator(const Iter &source)
+                {
+                    static FuncTable table_storage
+                    {
+                        [](const std::any &from, std::any &to) // copy
+                        {
+                            to.emplace<Iter>(std::any_cast<const Iter &>(from));
+                        },
+                        [](const std::any &a, const std::any &b) -> bool // equal
+                        {
+                            return std::any_cast<const Iter &>(a) == std::any_cast<const Iter &>(b);
+                        },
+                        [](std::any &iter) // increment
+                        {
+                            ++std::any_cast<Iter &>(iter);
+                        },
+                        [](const std::any &a, const std::any &b) -> std::ptrdiff_t // distance
+                        {
+                            return std::distance(std::any_cast<const Iter &>(a), std::any_cast<const Iter &>(b));
+                        },
+                        [](const std::any &iter) -> T & // dereference
+                        {
+                            return *std::any_cast<const Iter &>(iter);
+                        },
+                    };
+
+                    data.emplace<Iter>(source);
+                    table = &table_storage;
+                }
+
+                Iterator() : table(0) {}
+                Iterator(const Iterator &other)
+                {
+                    table = other.table;
+                    table->copy(other.data, data);
+                }
+                Iterator &operator=(const Iterator &other)
+                {
+                    if (&other == this)
+                        return *this;
+                    table = other.table;
+                    table->copy(other.data, data);
+                    return *this;
+                }
+
+                using value_type = T;
+                using reference  = T &;
+                using pointer    = T *;
+                using difference_type   = std::ptrdiff_t;
+                using iterator_category = std::forward_iterator_tag;
+
+                reference operator*() const
+                {
+                    return table->dereference(data);
+                }
+                pointer operator->() const
+                {
+                    return &table->dereference(data);
+                }
+                bool operator==(const Iterator &other) const
+                {
+                    if (table != other.table) return 0;
+                    if (table == 0) return 1;
+                    return table->equal(data, other.data);
+                }
+                bool operator!=(const Iterator &other) const
+                {
+                    return !(*this == other);
+                }
+                Iterator &operator++()
+                {
+                    table->increment(data);
+                    return *this;
+                }
+                Iterator operator++(int)
+                {
+                    Iterator ret = *this;
+                    ++*this;
+                    return ret;
+                }
+                difference_type operator-(const Iterator &other) const
+                {
+                    return table->distance(other.data, data);
+                }
+            };
+
+            Iterator begin_iter, end_iter;
+            mutable std::size_t len = -1;
+          public:
+            inline static constexpr bool is_const = std::is_const_v<T>;
+
+            Range() : Range((T *)0, (T *)0) {}
+            template <typename Object, typename = std::void_t<std::enable_if_t<!std::is_same_v<Object, Range>>,
+                                                              decltype(std::begin(std::declval<Object &>())),
+                                                              decltype(std::end  (std::declval<Object &>()))>>
+            Range(const Object &obj) : Range(std::begin(obj), std::end(obj))
+            {
+                static_assert(S != contiguous || impl::has_contiguous_storage<Object>::value, "The object must have a contiguous storage.");
+                if constexpr (impl::has_std_size<Object>::value)
+                    len = std::size(obj);
+            }
+            Range(std::initializer_list<T> list) : Range(&*list.begin(), &*list.end()) {}
+            template <typename Iter> Range(const Iter &begin, const Iter &end) : begin_iter(begin), end_iter(end)
+            {
+                static_assert(S != contiguous || std::is_pointer_v<Iter>, "For contiguous storage iterators have to be pointers.");
+            }
+            Iterator begin() const
+            {
+                return begin_iter;
+            }
+            Iterator end() const
+            {
+                return end_iter;
+            }
+            std::size_t size() const
+            {
+                if (len == std::size_t(-1))
+                    len = end_iter - begin_iter;
+                return len;
+            }
+        };
+        template <typename T> using ViewRange = Range<const T>;
+        template <typename T> using ContiguousRange = Range<T, contiguous>;
+        template <typename T> using ViewContiguousRange = Range<const T, contiguous>;
     }
 
-    enum Storage {any, contiguous};
 
-    template <typename T, Storage S = any> class Range
-    {
-        struct FuncTable
-        {
-            void (*copy)(const std::any &from, std::any &to);
-            bool (*equal)(const std::any &a, const std::any &b);
-            void (*increment)(std::any &iter);
-            std::ptrdiff_t (*distance)(const std::any &a, const std::any &b);
-            T &(*dereference)(const std::any &iter);
-        };
-
-        class Iterator
-        {
-            std::any data;
-            const FuncTable *table;
-          public:
-            template <typename Iter> Iterator(const Iter &source)
-            {
-                static FuncTable table_storage
-                {
-                    [](const std::any &from, std::any &to) // copy
-                    {
-                        to.emplace<Iter>(std::any_cast<const Iter &>(from));
-                    },
-                    [](const std::any &a, const std::any &b) -> bool // equal
-                    {
-                        return std::any_cast<const Iter &>(a) == std::any_cast<const Iter &>(b);
-                    },
-                    [](std::any &iter) // increment
-                    {
-                        ++std::any_cast<Iter &>(iter);
-                    },
-                    [](const std::any &a, const std::any &b) -> std::ptrdiff_t // distance
-                    {
-                        return std::distance(std::any_cast<const Iter &>(a), std::any_cast<const Iter &>(b));
-                    },
-                    [](const std::any &iter) -> T & // dereference
-                    {
-                        return *std::any_cast<const Iter &>(iter);
-                    },
-                };
-
-                data.emplace<Iter>(source);
-                table = &table_storage;
-            }
-
-            Iterator() : table(0) {}
-            Iterator(const Iterator &other)
-            {
-                table = other.table;
-                table->copy(other.data, data);
-            }
-            Iterator &operator=(const Iterator &other)
-            {
-                if (&other == this)
-                    return *this;
-                table = other.table;
-                table->copy(other.data, data);
-                return *this;
-            }
-
-            using value_type = T;
-            using reference  = T &;
-            using pointer    = T *;
-            using difference_type   = std::ptrdiff_t;
-            using iterator_category = std::forward_iterator_tag;
-
-            reference operator*() const
-            {
-                return table->dereference(data);
-            }
-            pointer operator->() const
-            {
-                return &table->dereference(data);
-            }
-            bool operator==(const Iterator &other) const
-            {
-                if (table != other.table) return 0;
-                if (table == 0) return 1;
-                return table->equal(data, other.data);
-            }
-            bool operator!=(const Iterator &other) const
-            {
-                return !(*this == other);
-            }
-            Iterator &operator++()
-            {
-                table->increment(data);
-                return *this;
-            }
-            Iterator operator++(int)
-            {
-                Iterator ret = *this;
-                ++*this;
-                return ret;
-            }
-            difference_type operator-(const Iterator &other) const
-            {
-                return table->distance(other.data, data);
-            }
-        };
-
-        Iterator begin_iter, end_iter;
-        mutable std::size_t len = -1;
-      public:
-        inline static constexpr bool is_const = std::is_const_v<T>;
-
-        Range() : Range((T *)0, (T *)0) {}
-        template <typename Object, typename = std::void_t<std::enable_if_t<!std::is_same_v<Object, Range>>,
-                                                          decltype(std::begin(std::declval<Object &>())),
-                                                          decltype(std::end  (std::declval<Object &>()))>>
-        Range(const Object &obj) : Range(std::begin(obj), std::end(obj))
-        {
-            static_assert(S != contiguous || impl::has_contiguous_storage<Object>::value, "The object must have a contiguous storage.");
-            if constexpr (impl::has_std_size<Object>::value)
-                len = std::size(obj);
-        }
-        Range(std::initializer_list<T> list) : Range(&*list.begin(), &*list.end()) {}
-        template <typename Iter> Range(const Iter &begin, const Iter &end) : begin_iter(begin), end_iter(end)
-        {
-            static_assert(S != contiguous || std::is_pointer_v<Iter>, "For contiguous storage iterators have to be pointers.");
-        }
-        Iterator begin() const
-        {
-            return begin_iter;
-        }
-        Iterator end() const
-        {
-            return end_iter;
-        }
-        std::size_t size() const
-        {
-            if (len == std::size_t(-1))
-                len = end_iter - begin_iter;
-            return len;
-        }
-    };
-    template <typename T> using ViewRange = Range<const T>;
-    template <typename T> using ContiguousRange = Range<T, contiguous>;
-    template <typename T> using ViewContiguousRange = Range<const T, contiguous>;
-
-
-    DefineExceptionInline(cant_read_file, "Unable to open/read from file.",
+    DefineExceptionInline(file_input_error, "File loading error.",
         (std::string,name,"File name")
+        (std::string,message,"Message")
     )
-    namespace Files
+    inline namespace Files
     {
         namespace impl
         {
@@ -467,12 +473,14 @@ namespace Utils
                 template <typename> friend class ::Utils::Handle;
                 static FILE *Create(const char *fname, const char *mode) {return fopen(fname, mode);}
                 static void Destroy(FILE *value) {fclose(value);}
-                static void Error(const char *fname, const char *) {throw cant_read_file(fname);}
+                static void Error(const char *fname, const char *) {throw file_input_error(fname, "Unable to open.");}
             };
             using FileHandle = Handle<FileHandleFuncs>;
         }
 
-        class MemoryFile // Manages a ref-counted memory copy of a file.
+        enum Compression {not_compressed, compressed};
+
+        class MemoryFile // Manages a ref-counted memory copy of a file. The data is always null-terminated, '\0' doesn't count against size.
         {
             struct Object
             {
@@ -485,15 +493,15 @@ namespace Utils
           public:
             MemoryFile() {}
 
-            MemoryFile(std::string fname)
+            MemoryFile(std::string fname, Compression mode = not_compressed)
             {
-                Create(fname);
+                Create(fname, mode);
             }
-            MemoryFile(const char *fname)
+            MemoryFile(const char *fname, Compression mode = not_compressed)
             {
-                Create(fname);
+                Create(fname, mode);
             }
-            void Create(std::string fname)
+            void Create(std::string fname, Compression mode = not_compressed)
             {
                 impl::FileHandle input({fname.c_str(), "rb"});
 
@@ -501,10 +509,36 @@ namespace Utils
                 auto size = std::ftell(*input);
                 std::fseek(*input, 0, SEEK_SET);
                 if (std::ferror(*input) || size == EOF)
-                    throw cant_read_file(fname);
-                data = std::make_shared<Object>(Object{fname, (std::size_t)size, std::make_unique<uint8_t[]>(size)});
-                if (!std::fread(data->bytes.get(), size, 1, *input))
-                    throw cant_read_file(fname);
+                    throw file_input_error(fname, "Unable to get file size.");
+
+                auto buf = std::make_unique<uint8_t[]>(mode == not_compressed ? size+1 : size); // +1 to make space for '\0' if it's not compressed.
+                if (!std::fread(buf.get(), size, 1, *input))
+                    throw file_input_error(fname, "Unable to read.");
+
+                switch (mode)
+                {
+                  case not_compressed:
+                    buf[size] = '\0';
+                    data = std::make_shared<Object>(Object{fname, (std::size_t)size, std::move(buf)});
+                    break;
+                  case compressed:
+                    {
+                        uint32_t uncompr_size;
+                        if (!Reflection::from_bytes(uncompr_size, buf.get(), buf.get() + size))
+                            throw file_input_error(fname, "Unable to decompress (too small).");
+
+                        auto uncompr_buf = std::make_unique<uint8_t[]>(uncompr_size+1); // +1 to make space for '\0'.
+                        uncompr_buf[uncompr_size] = '\0';
+                        uLongf uncompr_size_real = uncompr_size;
+                        if (uncompress(uncompr_buf.get(), &uncompr_size_real, buf.get()+4, size-4) != Z_OK)
+                            throw file_input_error(fname, "Unable to decompress.");
+                        if (uncompr_size != uncompr_size_real)
+                            throw file_input_error(fname, "Compressed data size mismatch.");
+
+                        data = std::make_shared<Object>(Object{fname, (std::size_t)uncompr_size, std::move(uncompr_buf)});
+                    }
+                    break;
+                }
             }
             void Destroy()
             {
@@ -528,23 +562,43 @@ namespace Utils
             }
         };
 
-        inline bool WriteToFile(std::string fname, const uint8_t *buf, std::size_t len)
+        inline bool WriteToFile(std::string fname, const uint8_t *buf, std::size_t len, Compression mode = not_compressed)
         {
             try
             {
                 impl::FileHandle output({fname.c_str(), "wb"});
-                if (!std::fwrite(buf, len, 1, *output))
-                    return 0;
+
+                switch (mode)
+                {
+                  case not_compressed:
+                    if (!std::fwrite(buf, len, 1, *output))
+                        return 0;
+                    break;
+                  case compressed:
+                    {
+                        auto compr_len = compressBound(len);
+                        auto compr_buf = std::make_unique<uint8_t[]>(compr_len);
+                        if (compress(compr_buf.get(), &compr_len, buf, len) != Z_OK)
+                            return 0;
+
+                        uint32_t out_len = len;
+                        Reflection::Bytes::fix_order(out_len);
+                        if (!std::fwrite(&out_len, sizeof out_len, 1, *output))
+                            return 0;
+
+                        if (!std::fwrite(compr_buf.get(), compr_len, 1, *output))
+                            return 0;
+                    }
+                    break;
+                }
             }
-            catch (decltype(cant_read_file("")) &e)
+            catch (decltype(file_input_error("","")) &e)
             {
                 return 0;
             }
             return 1;
         }
     }
-    using Files::MemoryFile;
-    using Files::WriteToFile;
 
 
     inline namespace ByteOrder

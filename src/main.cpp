@@ -435,10 +435,29 @@ namespace Objects
 
         bool SaveToFile(std::string fname)
         {
-            auto size = Reflection::byte_buffer_size(data);
-            auto buf = std::make_unique<uint8_t[]>(size);
-            Reflection::to_bytes(data, buf.get());
-            return Utils::WriteToFile(fname, buf.get(), size);
+            std::string str = Reflection::to_string(data);
+            return Utils::WriteToFile(fname, (uint8_t *)str.data(), str.size(), Utils::compressed);
+        }
+        bool LoadFromFile(std::string fname)
+        {
+            Utils::MemoryFile file;
+            try
+            {
+                file.Create(fname, Utils::compressed);
+            }
+            catch(decltype(Utils::file_input_error("","")) &e)
+            {
+                return 0;
+            }
+
+            auto data_copy = data;
+            if (!Reflection::from_string(data, (char *)file.Data())) // `MemoryFile::Data()` is null-terminated, so we're fine.
+            {
+                data = data_copy;
+                return 0;
+            }
+
+            return 1;
         }
     };
 
@@ -865,8 +884,18 @@ namespace Objects
       public:
         void Tick(const Scene &scene)
         {
-            ""; if (Keys::space.pressed())
-                scene.Get<Map>().SaveToFile("out.txt");
+            "";
+            if (Keys::space.pressed())
+            {
+                bool load = Keys::l_ctrl.down();
+                int status;
+                if (load)
+                    status = scene.Get<Map>().LoadFromFile("out.txt");
+                else
+                    status = scene.Get<Map>().SaveToFile("out.txt");
+                if (!status)
+                    std::cout << "Unable to " << (load ? "load" : "save") << '\n';
+            }
         }
         void Render(const Scene &scene)
         {
