@@ -1,6 +1,7 @@
 #ifndef REFLECTION_H_INCLUDED
 #define REFLECTION_H_INCLUDED
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdlib>
@@ -13,7 +14,12 @@
 #include <vector>
 
 #include "mat.h"
+#include "platform.h"
 #include "preprocessor.h"
+
+#ifdef PLATFORM_BIG_ENDIAN
+#  define REFLECTION_NONNATIVE_ENDIANNESS
+#endif
 
 namespace Reflection
 {
@@ -199,6 +205,26 @@ namespace Reflection
         }
     }
 
+    namespace Bytes
+    {
+        inline void fix_order(uint8_t *begin, uint8_t *end)
+        {
+            #ifdef REFLECTION_NONNATIVE_ENDIANNESS
+            std::size_t half_len = (end - begin) / 2;
+            for (std::size_t i = 0; i < half_len; i++)
+                std::swap(*begin++, *--end);
+            #else
+            (void)begin;
+            (void)end;
+            #endif
+        }
+        template <typename T> void fix_order(T &value)
+        {
+            static_assert(std::is_arithmetic_v<T> || std::is_enum_v<T>, "T must be arithmetic or an enum.");
+            fix_order((uint8_t *)&value, (uint8_t *)(&value + 1));
+        }
+    }
+
     namespace Cexpr
     {
         // Utils
@@ -312,6 +338,11 @@ namespace Reflection
         // Should be used for primitives only.
         inline std::string reflection_interface_primitive_to_string(const void *) noexcept {return "??";}
         inline std::size_t reflection_interface_primitive_from_string(void *, const char *) = delete; // Returns a number of chars consumed or 0 if the conversion has failed (in this case the object is left unchanged).
+
+        inline std::size_t reflection_interface_primitive_byte_buffer_size(const void *) = delete; // Returns the amount of bytes needed to store an object.
+        inline uint8_t *reflection_interface_primitive_to_bytes(const void *, uint8_t *buf) = delete; // Returns the pointer to the next free byte in the buffer.
+        inline const uint8_t *reflection_interface_primitive_from_bytes(void *, const uint8_t *buf, const uint8_t *buf_end) = delete; // Returns a pointer to the next byte in the buffer or 0 on failure.
+
         // Should be used for composites only and return a short single-line summary of contents. Optional.
         inline std::string reflection_interface_composite_summary_string(const void *) noexcept {return "...";}
 
@@ -346,6 +377,37 @@ namespace Reflection
                 return 0;
             *obj = val;
             return chars_consumed;
+        }
+        inline std::size_t reflection_interface_primitive_byte_buffer_size(const std::string *obj)
+        {
+            return 4 + obj->size();
+        }
+        inline uint8_t *reflection_interface_primitive_to_bytes(const std::string *obj, uint8_t *buf)
+        {
+            uint32_t len = obj->size();
+            Bytes::fix_order(len);
+            std::memcpy(buf, &len, sizeof len);
+            buf += sizeof len;
+            std::memcpy(buf, obj->data(), obj->size());
+            buf += obj->size();
+            return buf;
+        }
+        inline const uint8_t *reflection_interface_primitive_from_bytes(std::string *obj, const uint8_t *buf, const uint8_t *buf_end)
+        {
+            if (buf_end - buf < 4)
+                return 0;
+            uint32_t len;
+            std::memcpy(&len, buf, sizeof len);
+            Bytes::fix_order(len);
+            buf += sizeof len;
+
+            if (buf_end - buf < std::ptrdiff_t(len))
+                return 0;
+            obj->clear();
+            obj->reserve(len);
+            for (std::size_t i = 0; i < len; i++)
+                obj->push_back(*buf++);
+            return buf;
         }
 
         // Arithmetic types
@@ -426,6 +488,23 @@ namespace Reflection
                 return 0;
         }
 
+        // (these also work for enums)
+        template <typename T> std::enable_if_t<std::is_arithmetic_v<T> || std::is_enum_v<T>, std::size_t> reflection_interface_primitive_byte_buffer_size(const T *) {return sizeof(T);}
+        template <typename T> std::enable_if_t<std::is_arithmetic_v<T> || std::is_enum_v<T>, uint8_t *> reflection_interface_primitive_to_bytes(const T *obj, uint8_t *buf)
+        {
+            std::memcpy(buf, obj, sizeof(T));
+            Bytes::fix_order(buf, buf + sizeof(T));
+            return buf + sizeof(T);
+        }
+        template <typename T> std::enable_if_t<std::is_arithmetic_v<T> || std::is_enum_v<T>, const uint8_t *> reflection_interface_primitive_from_bytes(T *obj, const uint8_t *buf, const uint8_t *buf_end)
+        {
+            if (buf_end - buf < std::ptrdiff_t(sizeof(T)))
+                return 0;
+            std::memcpy(obj, buf, sizeof(T));
+            Bytes::fix_order(*obj);
+            return buf + sizeof(T);
+        }
+
         // Enums
         template <typename T> std::enable_if_t<std::is_enum_v<T>, std::string> reflection_interface_primitive_to_string(const T *obj)
         {
@@ -463,6 +542,7 @@ namespace Reflection
             *obj = it->second;
             return it->first.size();
         }
+        // (byte-related functions from arithmetics are used)
 
         // Vectors/matrices
         template <typename T> constexpr std::enable_if_t<Math::type_category<T>::vec_or_mat, std::size_t> reflection_interface_field_count(const T *)
@@ -559,6 +639,10 @@ namespace Reflection
 
             template <typename T> static std::size_t primitive_from_string(T &obj, const char *str) {return reflection_interface_primitive_from_string(&obj, str);}
             template <typename T> static constexpr bool primitive_has_from_string() {return !noexcept(reflection_interface_primitive_from_string((T *)0, (const char *)0));}
+
+            template <typename T> static std::size_t primitive_byte_buffer_size(const T &obj) {return reflection_interface_primitive_byte_buffer_size(&obj);}
+            template <typename T> static uint8_t *primitive_to_bytes(const T &obj, uint8_t *buf) {return reflection_interface_primitive_to_bytes(&obj, buf);} // Returns a next pointer.
+            template <typename T> static const uint8_t *primitive_from_bytes(T &obj, const uint8_t *buf, const uint8_t *buf_end) {return reflection_interface_primitive_from_bytes(&obj, buf, buf_end);} // Returns a next pointer or 0 on failure.
 
             template <typename T> static const auto &enum_string_value_map() {return reflection_interface_enum_string_value_map((const T *)0);}
             template <typename T> static const auto &enum_value_string_map() {return reflection_interface_enum_value_string_map((const T *)0);}
@@ -1385,6 +1469,112 @@ namespace Reflection
             return 0;
         }
         return 1;
+    }
+
+
+    template <typename T> std::size_t byte_buffer_size(const T &object)
+    {
+        if constexpr (Interface::is_structure<T>())
+        {
+            std::size_t size = 0;
+
+            auto lambda = [&](auto index)
+            {
+                size += byte_buffer_size(Interface::field<index.value>(object));
+            };
+
+            Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, lambda);
+
+            return size;
+        }
+        else if constexpr (Interface::is_container<T>())
+        {
+            std::size_t size = sizeof(uint32_t);
+
+            for (auto it = Interface::container_cbegin(object); it != Interface::container_cend(object); it++)
+            {
+                size += byte_buffer_size(*it);
+            }
+
+            return size;
+        }
+        else // primitive
+        {
+            return Interface::primitive_byte_buffer_size(object);
+        }
+    }
+
+    // Returns a pointer to the next free byte in the buffer.
+    template <typename T> uint8_t *to_bytes(const T &object, uint8_t *buf)
+    {
+        if constexpr (Interface::is_structure<T>())
+        {
+            auto lambda = [&](auto index)
+            {
+                buf = to_bytes(Interface::field<index.value>(object), buf);
+            };
+
+            Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, lambda);
+
+            return buf;
+        }
+        else if constexpr (Interface::is_container<T>())
+        {
+            buf = to_bytes(uint32_t(Interface::container_size(object)), buf);
+
+            for (auto it = Interface::container_cbegin(object); it != Interface::container_cend(object); it++)
+            {
+                buf = to_bytes(*it, buf);
+            }
+
+            return buf;
+        }
+        else // primitive
+        {
+            return Interface::primitive_to_bytes(object, buf);
+        }
+    }
+
+    // Returns a pointer to the next byte in the buffer or 0 in failure.
+    // WARNING: `object` may end up in an invalid state in case of a failure.
+    template <typename T> const uint8_t *from_bytes(T &object, const uint8_t *buf, const uint8_t *buf_end)
+    {
+        if (!buf)
+            return 0;
+
+        if constexpr (Interface::is_structure<T>())
+        {
+            auto lambda = [&](auto index)
+            {
+                buf = from_bytes(Interface::field<index.value>(object), buf, buf_end);
+            };
+
+            Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, lambda);
+
+            return buf;
+        }
+        else if constexpr (Interface::is_container<T>())
+        {
+            uint32_t size;
+            buf = from_bytes(size, buf, buf_end);
+            if (!buf)
+                return 0;
+
+            for (uint32_t i = 0; i < size; i++)
+            {
+                Interface::container_value_t<T> tmp;
+                buf = from_bytes(tmp, buf, buf_end);
+                if (!buf)
+                    return 0;
+                Interface::container_insert_move(object, Interface::container_cend(object), std::move(tmp));
+            }
+
+            return buf;
+        }
+        else // primitive
+        {
+            return Interface::primitive_from_bytes(object, buf, buf_end);
+        }
     }
 }
 

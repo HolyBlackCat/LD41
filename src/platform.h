@@ -1,5 +1,7 @@
 #ifndef PLATFORM_H_INCLUDED
 
+#include <SDL2/SDL_endian.h>
+
 #if defined(ANDROID) || defined(__ANDROID__)
 #  define PLATFORM_MOBILE
 #else
@@ -20,6 +22,15 @@
 #else
 #  define OnMobile(...)
 #  define IsOnMobile 0
+#endif
+
+
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+#  define PLATFORM_BIG_ENDIAN
+#elif SDL_BYTEORDER == SDL_LIL_ENDIAN
+#  define PLATFORM_LIL_ENDIAN
+#else
+#  error Invalid endianness.
 #endif
 
 #endif

@@ -435,12 +435,10 @@ namespace Objects
 
         bool SaveToFile(std::string fname)
         {
-            std::string text = Reflection::to_string(data);
-            std::ofstream out(fname);
-            if (!out) return 0;
-            out << text;
-            if (!out) return 0;
-            return 1;
+            auto size = Reflection::byte_buffer_size(data);
+            auto buf = std::make_unique<uint8_t[]>(size);
+            Reflection::to_bytes(data, buf.get());
+            return Utils::WriteToFile(fname, buf.get(), size);
         }
     };
 

@@ -3,7 +3,8 @@
 
 #include <any>
 #include <cstddef>
-#include <fstream>
+#include <cstdint>
+#include <cstdio>
 #include <iterator>
 #include <memory>
 #include <new>
@@ -457,63 +458,93 @@ namespace Utils
     DefineExceptionInline(cant_read_file, "Unable to open/read from file.",
         (std::string,name,"File name")
     )
-
-    class MemoryFile // Manages a ref-counted memory copy of a file.
+    namespace Files
     {
-        struct Object
+        namespace impl
         {
-            std::string name;
-            std::vector<uint8_t> bytes;
-        };
-        std::shared_ptr<Object> data;
-      public:
-        MemoryFile() {}
+            class FileHandleFuncs
+            {
+                template <typename> friend class ::Utils::Handle;
+                static FILE *Create(const char *fname, const char *mode) {return fopen(fname, mode);}
+                static void Destroy(FILE *value) {fclose(value);}
+                static void Error(const char *fname, const char *) {throw cant_read_file(fname);}
+            };
+            using FileHandle = Handle<FileHandleFuncs>;
+        }
 
-        MemoryFile(std::string fname)
+        class MemoryFile // Manages a ref-counted memory copy of a file.
         {
-            Create(fname);
-        }
-        MemoryFile(const char *fname)
+            struct Object
+            {
+                std::string name;
+                std::size_t size;
+                std::unique_ptr<uint8_t[]> bytes;
+            };
+            std::shared_ptr<Object> data;
+
+          public:
+            MemoryFile() {}
+
+            MemoryFile(std::string fname)
+            {
+                Create(fname);
+            }
+            MemoryFile(const char *fname)
+            {
+                Create(fname);
+            }
+            void Create(std::string fname)
+            {
+                impl::FileHandle input({fname.c_str(), "rb"});
+
+                std::fseek(*input, 0, SEEK_END);
+                auto size = std::ftell(*input);
+                std::fseek(*input, 0, SEEK_SET);
+                if (std::ferror(*input) || size == EOF)
+                    throw cant_read_file(fname);
+                data = std::make_shared<Object>(Object{fname, (std::size_t)size, std::make_unique<uint8_t[]>(size)});
+                if (!std::fread(data->bytes.get(), size, 1, *input))
+                    throw cant_read_file(fname);
+            }
+            void Destroy()
+            {
+                data.reset();
+            }
+            bool Exists() const
+            {
+                return bool(data);
+            }
+            const uint8_t *Data() const
+            {
+                return data->bytes.get();
+            }
+            std::size_t Size() const
+            {
+                return data->size;
+            }
+            const std::string &Name() const
+            {
+                return data->name;
+            }
+        };
+
+        inline bool WriteToFile(std::string fname, const uint8_t *buf, std::size_t len)
         {
-            Create(fname);
+            try
+            {
+                impl::FileHandle output({fname.c_str(), "wb"});
+                if (!std::fwrite(buf, len, 1, *output))
+                    return 0;
+            }
+            catch (decltype(cant_read_file("")) &e)
+            {
+                return 0;
+            }
+            return 1;
         }
-        void Create(std::string fname)
-        {
-            std::ifstream input(fname, input.in | input.binary);
-            if (!input)
-                throw cant_read_file(fname);
-            input >> std::noskipws;
-            input.seekg(0, input.end);
-            auto size = input.tellg();
-            input.seekg(0, input.beg);
-            if (size == decltype(size)(-1))
-                throw cant_read_file(fname);
-            data = std::make_shared<Object>(Object{fname, decltype(Object::bytes)(size)});
-            input.read((char *)data->bytes.data(), size);
-            if (!input)
-                throw cant_read_file(fname);
-        }
-        void Destroy()
-        {
-            data.reset();
-        }
-        bool Exists() const
-        {
-            return bool(data);
-        }
-        const uint8_t *Data() const
-        {
-            return data->bytes.data();
-        }
-        std::size_t Size() const
-        {
-            return data->bytes.size();
-        }
-        const std::string &Name() const
-        {
-            return data->name;
-        }
-    };
+    }
+    using Files::MemoryFile;
+    using Files::WriteToFile;
 
 
     inline namespace ByteOrder
