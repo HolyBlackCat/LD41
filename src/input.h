@@ -92,7 +92,7 @@ namespace Input
 
     // It remembers the address of the last passed string and resets internal cursor position if it changes. Null can be used to reset too.
     // Line-feeds will never be added to the `str`.
-    void Text(std::string *str, int len_cap = -1);
+    void Text(std::string *str, int len_cap = -1, const std::string &allowed_chars = "");
 
     int TextCursorPos(); // The cursor should be drawn before or under the characther with returned index.
     int TextCursorBytePos();

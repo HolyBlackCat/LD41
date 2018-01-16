@@ -1178,7 +1178,7 @@ namespace Reflection
                 {
                     return {*(const T *)ptr->pointer(), field_name_to_index<const T>(name)};
                 },
-                [](const Generic *ptr) -> void // clear
+                [](const Generic *ptr) -> void // reset
                 {
                     if constexpr (std::is_const_v<T>)
                     {
@@ -1186,7 +1186,14 @@ namespace Reflection
                     }
                     else
                     {
-                        if constexpr (Cexpr::supports_reset_by_empty_list_assignment<T>)
+                        if constexpr (Interface::is_structure<T>())
+                        {
+                            Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, [ptr](auto index)
+                            {
+                                Generic(Interface::field<index.value>(*(T *)ptr->pointer())).reset();
+                            });
+                        }
+                        else if constexpr (Cexpr::supports_reset_by_empty_list_assignment<T>)
                         {
                             *(T *)ptr->pointer() = {};
                         }

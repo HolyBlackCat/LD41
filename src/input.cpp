@@ -119,7 +119,7 @@ namespace Input
         else
             return "";
     }
-    void Text(std::string *str, int len_cap)
+    void Text(std::string *str, int len_cap, const std::string &allowed_chars)
     {
         static std::string *last_str = 0;
         if (str != last_str)
@@ -136,10 +136,25 @@ namespace Input
                 text_cursor_byte_pos = 0;
             }
         }
+
         if (str)
         {
             std::string &ref = *str;
             std::string text = RawText();
+
+            std::vector<uint16_t> allowed;
+
+            if (allowed_chars.size())
+            {
+                allowed.reserve(u8strlen(allowed_chars));
+
+                for (auto it = allowed_chars.begin(); it != allowed_chars.end(); it++)
+                {
+                    if (!u8isfirstbyte(it))
+                        continue;
+                    allowed.push_back(u8decode(it));
+                }
+            }
 
             if (!u8valid16(ref))
                 ref = {};
@@ -171,7 +186,23 @@ namespace Input
                 text_cursor_pos--;
             }
 
-            if (text.size() && std::find(text.begin(), text.end(), '\n') == text.end() && (len_cap < 0 || u8strlen(ref) + u8strlen(text) <= len_cap))
+            bool has_invalid_chars = 0;
+
+            for (auto it = text.begin(); it != text.end(); it++)
+            {
+                if (!u8isfirstbyte(it))
+                    continue;
+                uint16_t ch = u8decode(it);
+
+                bool invalid = (ch == '\n' || (allowed.size() && std::find(allowed.begin(), allowed.end(), ch) == allowed.end()));
+                if (invalid)
+                {
+                    has_invalid_chars = 1;
+                    break;
+                }
+            }
+
+            if (text.size() && !has_invalid_chars && (len_cap < 0 || u8strlen(ref) + u8strlen(text) <= std::size_t(len_cap)))
             {
                 ref = ref.substr(0, text_cursor_byte_pos) + text + ref.substr(text_cursor_byte_pos);
                 text_cursor_byte_pos += text.size();

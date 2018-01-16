@@ -95,7 +95,6 @@ namespace Renderers
                 DebugAssert("2D poly renderer: Quad with absolute texture coordinates mode but no texture coordinates specified.", m_abs_tex_pos <= has_texture);
                 DebugAssert("2D poly renderer: Quad with texture and color, but without a mixing factor.", (has_texture && has_color) == has_tex_color_fac);
                 DebugAssert("2D poly renderer: Quad with a matrix but without a center specified.", has_matrix <= has_center);
-                DebugAssert("2D poly renderer: Quad with a center position specified in texels but without a texture.", m_center_pos_tex <= has_texture);
 
                 if (m_abs_pos)
                     m_size -= m_pos;

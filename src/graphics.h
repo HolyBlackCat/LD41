@@ -583,7 +583,7 @@ namespace Graphics
             {
                 for (int y = 0; y < ret.size.y; y++)
                 {
-                    unsigned char byte, *byte_ptr = bitmap.buffer + bitmap.pitch * y;
+                    unsigned char byte = 0, *byte_ptr = bitmap.buffer + bitmap.pitch * y;
                     for (int x = 0; x < ret.size.x; x++)
                     {
                         if (x % 8 == 0)
