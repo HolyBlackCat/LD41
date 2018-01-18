@@ -1567,6 +1567,8 @@ namespace Reflection
             if (!buf)
                 return 0;
 
+            Interface::container_erase(object, Interface::container_cbegin(object), Interface::container_cend(object));
+
             for (uint32_t i = 0; i < size; i++)
             {
                 Interface::container_value_t<T> tmp;

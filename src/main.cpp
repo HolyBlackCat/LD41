@@ -112,10 +112,9 @@ namespace Draw
 {
     inline namespace TextPresets
     {
-        void TinyWithBlackOutline(Renderers::Poly2D::Text_t &obj) // Is a preset
+        void WithBlackOutline(Renderers::Poly2D::Text_t &obj) // Is a preset
         {
-            obj.color(fvec3(1)).font(font_tiny)
-               .callback([](Renderers::Poly2D::Text_t::CallbackParams params)
+            obj.callback([](Renderers::Poly2D::Text_t::CallbackParams params)
             {
                 if (params.render_pass && params.render.size())
                 {
@@ -301,20 +300,22 @@ namespace Objects
     class Map
     {
       public:
+        static constexpr int segment_size = 8;
+
+        static constexpr uint32_t version_magic = 1; // This should be changed when map binary structure changes.
+
         enum LayerEnum
         {
             back, front, num_layers
         };
 
-      private:
-        static constexpr int segment_size = 8;
 
         struct Tile
         {
             Reflect(Tile)
             (
-                (int)(id),
-                (ivec2)(pos),
+                (short)(id),
+                (svec2)(pos),
             )
         };
 
@@ -370,7 +371,7 @@ namespace Objects
                             mask = new_mask;
                     }
                 }
-                tiles.push_back(Tile{id, pos});
+                tiles.push_back(Tile{short(id), pos});
             }
             void RemoveTile(ivec2 pos, bool remove_all = 0)
             {
@@ -426,8 +427,46 @@ namespace Objects
                     new_layer.AddTile(ivec2(x,y) + offset, id);
                 *this = std::move(new_layer);
             }
+
+            ivec2 GetSegPosForTile(ivec2 tile_pos) const // The result is clamped
+            {
+                ivec2 seg     = div_ex(tile_pos, segment_size),
+                      max_seg = (size - 1) / segment_size;
+                return clamp(seg, ivec2(0), max_seg);
+            }
+
+            void Render(ivec2 cam_pos) const
+            {
+                ivec2 first_seg = GetSegPosForTile(div_ex(cam_pos - screen_sz / 2, tile_size)),
+                      last_seg  = GetSegPosForTile(div_ex(cam_pos + screen_sz / 2, tile_size));
+
+                for (int y = first_seg.y; y <= last_seg.y; y++)
+                for (int x = first_seg.x; x <= last_seg.x; x++)
+                for (const auto &tile : GetSeg({x,y}).tiles)
+                {
+                    DebugAssert(Str("Tile at ", tile.pos, " is incorrectly placed into segment ", ivec2(x,y), "."), (tile.pos >= ivec2(x,y) * segment_size).all() && (tile.pos < (ivec2(x,y) + 1) * segment_size).all());
+                    r.Quad(tile.pos * tile_size - cam_pos, ivec2(tile_size)).tex(tile_sheet->TileTexPos(tile.id));
+                }
+            }
+
+            void RenderHighlighted(ivec2 cam_pos, int period, float highlight) const
+            {
+                ivec2 first_seg = GetSegPosForTile(div_ex(cam_pos - screen_sz / 2, tile_size)),
+                      last_seg  = GetSegPosForTile(div_ex(cam_pos + screen_sz / 2, tile_size));
+
+                for (int y = first_seg.y; y <= last_seg.y; y++)
+                for (int x = first_seg.x; x <= last_seg.x; x++)
+                for (const auto &tile : GetSeg({x,y}).tiles)
+                {
+                    DebugAssert(Str("Tile at ", tile.pos, " is incorrectly placed into segment ", ivec2(x,y), "."), (tile.pos >= ivec2(x,y) * segment_size).all() && (tile.pos < (ivec2(x,y) + 1) * segment_size).all());
+                    float t = tick_stabilizer.ticks % period / float(period/2);
+                    t = (t < 1 ? smoothstep(t) : smoothstep(2-t));
+                    r.Quad(tile.pos * tile_size - cam_pos, ivec2(tile_size)).tex(tile_sheet->TileTexPos(tile.id)).color(fvec3(t)).mix(1-highlight);
+                }
+            }
         };
 
+      private:
         std::string file_name;
 
         ReflectStruct(Data, (
@@ -495,27 +534,6 @@ namespace Objects
             return GetLayer(layer).GetTop(pos);
         }
 
-        void Render(const Scene &scene, LayerEnum layer) const
-        {
-            auto &cam = scene.Get<Camera>();
-            constexpr ivec2 half_extent = screen_sz / 2;
-            auto &la = GetLayer(layer);
-            ivec2 first_seg = div_ex((cam.pos - half_extent), segment_size * tile_size),
-                  last_seg  = div_ex((cam.pos + half_extent), segment_size * tile_size),
-                  max_seg   = (la.size - 1) / segment_size;
-
-            first_seg = clamp(first_seg, ivec2(0), max_seg);
-            last_seg  = clamp(last_seg , ivec2(0), max_seg);
-
-            for (int y = first_seg.y; y <= last_seg.y; y++)
-            for (int x = first_seg.x; x <= last_seg.x; x++)
-            for (const auto &tile : la.GetSeg({x,y}).tiles)
-            {
-                DebugAssert(Str("Tile at ", tile.pos, " is incorrectly placed into segment ", ivec2(x,y), "."), (tile.pos >= ivec2(x,y) * segment_size).all() && (tile.pos < (ivec2(x,y) + 1) * segment_size).all());
-                r.Quad(tile.pos * tile_size - cam.pos, ivec2(tile_size)).tex(la.tile_sheet->TileTexPos(tile.id));
-            }
-        }
-
         const std::string &FileName() const
         {
             return file_name;
@@ -525,17 +543,30 @@ namespace Objects
             file_name = new_file_name;
         }
 
-        bool SaveToFile() const
+        bool SaveToFile(bool forward_compat = 0) const
         {
-            std::string str = Reflection::to_string(data);
-            return Utils::WriteToFile(file_name, (uint8_t *)str.data(), str.size(), Utils::compressed);
+            if (forward_compat)
+            {
+                std::string str = Reflection::to_string(data);
+                return Utils::WriteToFile(file_name + ".fwdcompat", (uint8_t *)str.data(), str.size(), Utils::compressed);
+            }
+            else
+            {
+                auto len = sizeof(uint32_t) + Reflection::byte_buffer_size(data);
+                auto buf = std::make_unique<uint8_t[]>(len);
+                uint8_t *ptr = Reflection::to_bytes<uint32_t>(version_magic, buf.get());
+                ptr = Reflection::to_bytes(data, ptr);
+                if (ptr != buf.get() + len)
+                    return 0;
+                return Utils::WriteToFile(file_name, buf.get(), len, Utils::compressed);
+            }
         }
-        bool LoadFromFile()
+        bool LoadFromFile(bool forward_compat)
         {
             Utils::MemoryFile file;
             try
             {
-                file.Create(file_name, Utils::compressed);
+                file.Create((forward_compat ? file_name + ".fwdcompat" : file_name), Utils::compressed);
             }
             catch(decltype(Utils::file_input_error("","")) &e)
             {
@@ -543,7 +574,26 @@ namespace Objects
             }
 
             auto data_copy = data;
-            if (!Reflection::from_string(data, (char *)file.Data())) // `MemoryFile::Data()` is null-terminated, so we're fine.
+            bool ok;
+            if (forward_compat)
+            {
+                ok = Reflection::from_string(data, (char *)file.Data()); // `MemoryFile::Data()` is null-terminated, so we're fine.
+            }
+            else
+            {
+                ok = 0;
+                const uint8_t *begin = file.Data(), *end = file.Data() + file.Size();
+                uint32_t magic;
+                begin = Reflection::from_bytes<uint32_t>(magic, begin, end);
+                if (begin && magic == version_magic)
+                {
+                    begin = Reflection::from_bytes(data, begin, end);
+                    if (begin == end)
+                        ok = 1;
+                }
+            }
+
+            if (!ok)
             {
                 data = data_copy;
                 return 0;
@@ -569,15 +619,8 @@ namespace Objects
         bool selecting_tiles_sheet_hovered = 0,
              selecting_tiles_button_down = 0;
 
-        struct GrabbedTile
-        {
-            int id;
-            ivec2 offset;
-        };
-
-        std::vector<GrabbedTile> grabbed_tiles;
-        ivec2 grabbed_tiles_size = ivec2(0),
-              grabbed_tiles_base_offset = ivec2(0);
+        Map::MapLayer grabbed_tiles;
+        ivec2 grabbed_tiles_base_offset = ivec2(0);
 
         ivec2 mouse_pos = ivec2(0);
 
@@ -587,8 +630,7 @@ namespace Objects
              map_selection_map_hovered = 0,
              map_selection_multiple_tiles = 0;
 
-        enum class Mode {copy, erase, select};
-        Mode current_mode = Mode::copy;
+        bool eraser_mode = 0;
 
         bool resize_started = 0;
         ivec2 resize_type = ivec2(0);
@@ -605,23 +647,23 @@ namespace Objects
             message_alpha = 1;
         }
 
-        void SaveMap(const Scene &scene)
+        void SaveMap(const Scene &scene, bool forward_compat = 0)
         {
             auto &map = scene.Get<Map>();
-            bool ok = map.SaveToFile();
+            bool ok = map.SaveToFile(forward_compat);
             if (ok)
-                ShowMessage(Str("\2Map \1", map.FileName(), "\2 was successfully saved"));
+                ShowMessage(Str("\2Map \1", map.FileName(), "\2 was successfully saved", (forward_compat ? " \4(compatibility mode)" : "")));
             else
-                ShowMessage(Str("\3Map \1", map.FileName(), "\3 couldn't be saved"));
+                ShowMessage(Str("\3Map \1", map.FileName(), "\3 couldn't be saved", (forward_compat ? " \4(compatibility mode)" : "")));
         }
-        void LoadMap(const Scene &scene)
+        void LoadMap(const Scene &scene, bool forward_compat = 0)
         {
             auto &map = scene.Get<Map>();
-            bool ok = map.LoadFromFile();
+            bool ok = map.LoadFromFile(forward_compat);
             if (ok)
-                ShowMessage(Str("\2Map \1", map.FileName(), "\2 was successfully loaded"));
+                ShowMessage(Str("\2Map \1", map.FileName(), "\2 was successfully loaded", (forward_compat ? " \4(compatibility mode)" : "")));
             else
-                ShowMessage(Str("\3Map \1", map.FileName(), "\3 couldn't be loaded"));
+                ShowMessage(Str("\3Map \1", map.FileName(), "\3 couldn't be loaded", (forward_compat ? " \4(compatibility mode)" : "")));
         }
 
       public:
@@ -687,16 +729,16 @@ namespace Objects
             {
                 { // Saving/loading the map
                     if (Keys::space.pressed())
-                        SaveMap(scene);
+                        SaveMap(scene, Keys::l_alt.down());
                     if (Keys::l_ctrl.down() && Keys::f5.pressed())
-                        LoadMap(scene);
+                        LoadMap(scene, Keys::l_alt.down());
                 }
 
                 { // Open/close tile sheet
                     if (!selecting_tiles && Keys::tab.pressed() && !map_selection_button_down)
                     {
                         selecting_tiles = 1;
-                        current_mode = Mode::copy;
+                        eraser_mode = 0;
                     }
                     else if (selecting_tiles && Keys::tab.pressed() && !selecting_tiles_button_down)
                         selecting_tiles = 0;
@@ -709,17 +751,23 @@ namespace Objects
                 }
 
                 ivec2 wasd = ivec2(Keys::d.down() - Keys::a.down(), Keys::s.down() - Keys::w.down());
-
-                { // Camera
+                { // WASD modifiers
                     if (!selecting_tiles)
                     {
                         int speed = 6;
-                        if (Keys::l_shift.down())
-                            speed = 1;
+                        if (Keys::l_alt.down())
+                            speed = 100;
                         if (Keys::l_ctrl.down())
                             speed = 20;
-                        clamp_assign(editor_cam_pos += wasd * speed, 0, map.Layer(map.back).size * tile_size);
+                        if (Keys::l_shift.down())
+                            speed = 1;
+                        wasd *= speed;
                     }
+                }
+
+                { // Camera
+                    clamp_assign(editor_cam_pos += wasd, 0, map.Layer(map.back).size * tile_size);
+
                     cam.pos = editor_cam_pos;
                 }
 
@@ -749,11 +797,10 @@ namespace Objects
                         if (a.x > b.x) std::swap(a.x, b.x);
                         if (a.y > b.y) std::swap(a.y, b.y);
 
-                        grabbed_tiles_size = b - a + 1;
-                        grabbed_tiles = {};
+                        grabbed_tiles = Map::MapLayer(*map.Layer(target_layer).tile_sheet, b - a + 1);
                         for (int y = a.y; y <= b.y; y++)
                         for (int x = a.x; x <= b.x; x++)
-                            grabbed_tiles.push_back({map.Layer(target_layer).tile_sheet->TileIdFromSheetPos({x,y}), ivec2(x,y) - a});
+                            grabbed_tiles.AddTile(ivec2(x,y) - a, map.Layer(target_layer).tile_sheet->TileIdFromSheetPos({x,y}));
 
                         selecting_tiles = 0;
                     }
@@ -763,34 +810,10 @@ namespace Objects
                 if (!selecting_tiles) // Not `else`.
                 {
                     { // Switching modes
-                        Mode prev_mode = current_mode;
-
-                        if (Keys::q.pressed())
-                        {
-                            current_mode = Mode::copy;
-                        }
                         if (Keys::e.pressed())
                         {
-                            if (current_mode != Mode::erase)
-                                current_mode = Mode::erase;
-                            else
-                                current_mode = Mode::copy;
-                        }
-                        if (Keys::r.pressed())
-                        {
-                            if (current_mode != Mode::select)
-                                current_mode = Mode::select;
-                            else
-                                current_mode = Mode::copy;
-                        }
-
-                        if (current_mode != prev_mode)
-                        {
+                            eraser_mode = !eraser_mode;
                             grabbed_tiles = {};
-                            map_selection_button_down = 0;
-                            map_selection_start = ivec2(0);
-                            map_selection_end = ivec2(0);
-                            map_selection_multiple_tiles = 0;
                         }
                     }
 
@@ -831,7 +854,7 @@ namespace Objects
                     }
 
                     // Selecting map region
-                    if (grabbed_tiles.empty() && mouse.right.pressed() && map_selection_map_hovered)
+                    if (grabbed_tiles.size == ivec2(0) && mouse.right.pressed() && map_selection_map_hovered)
                     {
                         map_selection_button_down = 1;
                         map_selection_start = clamp(mouse_pos, 0, map.Layer(target_layer).size-1);
@@ -853,64 +876,53 @@ namespace Objects
                             if (a.x > b.x) std::swap(a.x, b.x);
                             if (a.y > b.y) std::swap(a.y, b.y);
 
-                            switch (current_mode)
+                            if (!eraser_mode)
                             {
-                              case Mode::copy:
-                                grabbed_tiles = {};
-                                grabbed_tiles_size = b - a + 1;
+                                grabbed_tiles = Map::MapLayer(*map.Layer(target_layer).tile_sheet, b - a + 1);
                                 if (!map_selection_multiple_tiles)
                                 {
                                     int id = map.GetTop(target_layer, map_selection_end);
                                     if (id != -1)
-                                        grabbed_tiles.push_back({id, ivec2(0)});
+                                        grabbed_tiles.AddTile(ivec2(0), id);
                                 }
                                 else
                                 {
                                     for (int y = a.y; y <= b.y; y++)
                                     for (int x = a.x; x <= b.x; x++)
                                     for (const auto &it : map.Get(target_layer, ivec2(x,y)))
-                                        grabbed_tiles.push_back({it, ivec2(x,y)-a});
+                                        grabbed_tiles.AddTile(ivec2(x,y) - a, it);
                                 }
-                                break;
-                              case Mode::erase:
+                            }
+                            else
+                            {
                                 if (map_selection_multiple_tiles)
                                 {
                                     for (int y = a.y; y <= b.y; y++)
                                     for (int x = a.x; x <= b.x; x++)
                                         map.RemoveTile(target_layer, ivec2(x,y), 1);
                                 }
-                                break;
                             }
                         }
                     }
 
                     // Moving and placing grabbed tiles
-                    if (current_mode == Mode::copy && grabbed_tiles.size())
+                    if (!eraser_mode && grabbed_tiles.size != ivec2(0))
                     {
                         ivec2 base_offset_prev = grabbed_tiles_base_offset;
-                        grabbed_tiles_base_offset = div_ex(-grabbed_tiles_size * tile_size/2 + mouse.pos() + cam.pos + tile_size/2, tile_size);
+                        grabbed_tiles_base_offset = div_ex(-grabbed_tiles.size * tile_size/2 + mouse.pos() + cam.pos + tile_size/2, tile_size);
 
                         if (mouse.left.pressed() || (mouse.left.down() && grabbed_tiles_base_offset != base_offset_prev))
-                            for (const auto &it : grabbed_tiles)
-                                map.AddTile(target_layer, grabbed_tiles_base_offset + it.offset, it.id);
+                            for (const auto &seg : grabbed_tiles.segments)
+                                for (const auto &it : seg.tiles)
+                                    map.AddTile(target_layer, grabbed_tiles_base_offset + it.pos, it.id);
 
                         if (mouse.right.pressed())
                             grabbed_tiles = {};
                     }
 
                     // Erasing
-                    if ((current_mode == Mode::copy || current_mode == Mode::erase) && mouse.left.down() && grabbed_tiles.empty() &&
-                        !map_selection_button_down && (mouse_pos_changed || mouse.left.pressed()) && map_selection_map_hovered)
+                    if (mouse.left.down() && grabbed_tiles.size == ivec2(0) && !map_selection_button_down && (mouse_pos_changed || mouse.left.pressed()) && map_selection_map_hovered)
                         map.RemoveTile(target_layer, mouse_pos);
-
-
-
-                    /*
-                    if (mouse.left.pressed())
-                        map.AddTile(Map::front, div_ex(mouse.pos(), tile_size), 0);
-                    if (mouse.right.pressed())
-                        map.RemoveTile(Map::front, div_ex(mouse.pos(), tile_size), Keys::l_ctrl.down());
-                    */
                 }
             }
         }
@@ -926,38 +938,15 @@ namespace Objects
                 t = (t < 1 ? smoothstep(t) : smoothstep(2-t));
 
                 fvec3 mode_color = fvec3(0.5);
-                switch (current_mode)
-                {
-                  case Mode::copy:
+                if (!eraser_mode)
                     mode_color = fvec3(0,0.6,1);
-                    break;
-                  case Mode::erase:
+                else
                     mode_color = fvec3(1,0.2,0.2);
-                    break;
-                  case Mode::select:
-                    mode_color = fvec3(0.25,0.85,0.25);
-                    break;
-                }
 
                 // Grabbed tiles
-                if (!selecting_tiles && grabbed_tiles.size() > 0)
+                if (!selecting_tiles && grabbed_tiles.size != ivec2(0))
                 {
-                    for (ivec2 offset : {ivec2( 1, 1), ivec2(-1, 1), ivec2(-1,-1), ivec2( 1,-1),
-                                         ivec2( 1, 0), ivec2( 0, 1), ivec2(-1, 0), ivec2( 0,-1)})
-                    {
-                        for (const auto &it : grabbed_tiles)
-                        {
-                            ivec2 tile_pos = grabbed_tiles_base_offset + it.offset;
-                            float t = mod_ex(tick_stabilizer.ticks - tile_pos.sum()*4, period) / float(period/2);
-                            t = (t < 1 ? smoothstep(t) : smoothstep(2-t));
-                            r.Quad(tile_pos * tile_size - cam.pos + offset, ivec2(16)).tex(map.Layer(target_layer).tile_sheet->TileTexPos(it.id)).color(fvec3(t)).mix(0);
-                        }
-                    }
-                    for (const auto &it : grabbed_tiles)
-                    {
-                        r.Quad((grabbed_tiles_base_offset + it.offset) * tile_size - cam.pos, ivec2(16)).tex(map.Layer(target_layer).tile_sheet->TileTexPos(it.id));
-                    }
-
+                    grabbed_tiles.RenderHighlighted(cam.pos - grabbed_tiles_base_offset * tile_size, period, 1/3.);
                 }
 
                 { // Map border
@@ -968,7 +957,7 @@ namespace Objects
 
 
                 // Map selection
-                bool show_selection_rect = map_selection_button_down && (map_selection_multiple_tiles || current_mode != Mode::copy);
+                bool show_selection_rect = map_selection_button_down && (map_selection_multiple_tiles || eraser_mode);
                 if (show_selection_rect)
                 {
                     constexpr int width = 2;
@@ -985,7 +974,7 @@ namespace Objects
                 }
 
                 // Mouse cursor
-                if (!selecting_tiles && grabbed_tiles.size() == 0 && !show_selection_rect)
+                if (!selecting_tiles && grabbed_tiles.size == ivec2(0) && !show_selection_rect)
                 {
                     constexpr int cursor_width = 4, cursor_length = 4, cursor_corner_size = 4, cursor_outline_size = 2;
 
@@ -1045,12 +1034,17 @@ namespace Objects
                         top_left = "Tile sheet";
 
                     ivec2 cam_pos = div_ex(cam.pos, tile_size),
-                          pos = (grabbed_tiles.size() > 0 ? grabbed_tiles_base_offset : mouse_pos);
+                          pos = (grabbed_tiles.size != ivec2(0) ? grabbed_tiles_base_offset : mouse_pos);
                     std::string bottom_left = Str("Map size: [", std::setw(5), map.MainSize().x, ",", std::setw(5), map.MainSize().y, "]",
                                                   "     Camera center: [", std::setw(5), cam_pos.x, ",", std::setw(5), cam_pos.y, "]",
                                                   "          Pos: [", std::setw(5), pos.x, ",", std::setw(5), pos.y, "]");
-                    if (grabbed_tiles.size() > 0 && grabbed_tiles_size != ivec2(1))
-                        bottom_left += Str("          Size: [", std::setw(3), grabbed_tiles_size.x, ",", std::setw(3), grabbed_tiles_size.y, "]");
+                    ivec2 size(0);
+                    if (grabbed_tiles.size != ivec2(0))
+                        size = grabbed_tiles.size;
+                    else if (map_selection_button_down && map_selection_multiple_tiles)
+                        size = abs(map_selection_end - map_selection_start) + 1;
+                    if (size != ivec2(0))
+                        bottom_left += Str("          Size: [", std::setw(3), size.x, ",", std::setw(3), size.y, "]");
 
                     std::string bottom_right;
                     if (show_help)
@@ -1061,8 +1055,7 @@ namespace Objects
                                            "TAB to close\n";
                         else
                             bottom_right = "WASD to move\n"
-                                           "(hold SHIFT for slow speed)\n"
-                                           "(hold CTRL for fast speed)\n"
+                                           "(+SHIFT - slow, +CTRL - fast, +ALT - faster)\n"
                                            "TAB to open tile sheet\n"
                                            "RMB to select tiles\n"
                                            "LMB to draw or erase\n"
@@ -1072,32 +1065,20 @@ namespace Objects
                         bottom_right += "F5 to reload textures\n"
                                         "SPACE to save\n"
                                         "CTRL+F5 to reload\n"
+                                        "(+ALT to save/load in forward-compatible mode)\n"
                                         "F1 to hide this text";
                     }
                     else
                         bottom_right = "F1 to show help";
 
                     std::string top_middle;
-                    if (!selecting_tiles)
-                    {
-                        switch (current_mode)
-                        {
-                          case Mode::copy:
-                            // Nothing
-                            break;
-                          case Mode::erase:
-                            top_middle = "Erasing";
-                            break;
-                          case Mode::select:
-                            top_middle = "Selecting";
-                            break;
-                        }
-                    }
+                    if (!selecting_tiles && eraser_mode)
+                        top_middle = "Erasing";
 
-                    r.Text(-screen_sz/2 + 2          , top_left     ).preset(Draw::TinyWithBlackOutline).align({-1,-1});
-                    r.Text((screen_sz/2-2).mul_x(-1) , bottom_left  ).preset(Draw::TinyWithBlackOutline).align({-1,1});
-                    r.Text(screen_sz/2 - 2           , bottom_right ).preset(Draw::TinyWithBlackOutline).align({1,1});
-                    r.Text(ivec2(0,-screen_sz.y/2+20), top_middle   ).preset(Draw::TinyWithBlackOutline).align({0,0}).color(mode_color);
+                    r.Text(-screen_sz/2 + 2          , top_left     ).preset(Draw::WithBlackOutline).font(font_tiny).align({-1,-1});
+                    r.Text((screen_sz/2-2).mul_x(-1) , bottom_left  ).preset(Draw::WithBlackOutline).font(font_tiny).align({-1,1});
+                    r.Text(screen_sz/2 - 2           , bottom_right ).preset(Draw::WithBlackOutline).font(font_tiny).align({1,1});
+                    r.Text(ivec2(0,-screen_sz.y/2+20), top_middle   ).preset(Draw::WithBlackOutline).align({0,0}).color(mode_color);
                 }
             }
 
@@ -1176,8 +1157,8 @@ namespace Scenes
         s.SetRender([](const Scene &s)
         {
             s.Get<Background>().Render();
-            s.Get<Map>().Render(s, Map::back);
-            s.Get<Map>().Render(s, Map::front);
+            s.Get<Map>().Layer(Map::back).Render(s.Get<Camera>().pos);
+            s.Get<Map>().Layer(Map::front).Render(s.Get<Camera>().pos);
             if (auto ptr = s.GetOpt<MapEditor>()) ptr->Render(s);
 
             s.Get<TestObject>().Render(s);
