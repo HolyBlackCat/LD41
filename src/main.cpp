@@ -291,8 +291,8 @@ namespace Objects
         }
         void Render()
         {
-            constexpr fvec3 c1 = fvec3(209,255,255)/255,
-                            c2 = fvec3(174,210,226)/255;
+            constexpr fvec3 c1 = fvec3(0.1),
+                            c2 = fvec3(0.2);
             r.Quad(-screen_sz/2, screen_sz).color(c1,c1,c2,c2);
         }
     };
