@@ -93,8 +93,9 @@ namespace Draw
          * /2 - green
          * /3 - red
          * /4 - gold
+         * /5 - blue
          */
-        [[nodiscard]] auto WithColors(const std::vector<fvec3> &colors = {fvec3(1), fvec3(0.25,1,0.5), fvec3(1,0.25,0.25), fvec3(1,5/6.,1/6.)}) // Returns a preset
+        [[nodiscard]] auto WithColors(const std::vector<fvec3> &colors = {fvec3(1), fvec3(0.25,1,0.5), fvec3(1,0.25,0.25), fvec3(1,5/6.,1/6.), fvec3(0,0.5,1)}) // Returns a preset
         {
             if (colors.size() > 7)
                 Program::Error("Too many text colors.");
@@ -263,6 +264,9 @@ namespace Objects
                                          mid   = &Tile::mid,
                                          back  = &Tile::back;
 
+        static constexpr layer_mem_ptr_t layer_list[] {front, mid, back};
+        static constexpr int layer_count = std::extent_v<decltype(layer_list)>;
+
 
         enum SafetyMode {Safe, Unsafe};
 
@@ -369,12 +373,22 @@ namespace Objects
             return data.Get(pos, layer);
         }
 
-        void Render(const Scene &scene, layer_mem_ptr_t layer) const
+        void Render(const Scene &scene, layer_mem_ptr_t layer, bool transparent = 0) const
         {
+            constexpr int period = 120;
+
             auto &cam = scene.Get<Camera>();
 
             ivec2 first = div_ex(cam.pos - screen_sz / 2, tile_size),
                   last  = div_ex(cam.pos + screen_sz / 2, tile_size);
+
+            float t;
+            if (transparent)
+            {
+                t = tick_stabilizer.ticks % period / float(period/2);
+                t = (t < 1 ? smoothstep(t) : smoothstep(2-t));
+                t *= 0.5;
+            }
 
             for (int y = first.y; y <= last.y; y++)
             for (int x = first.x; x <= last.x; x++)
@@ -382,7 +396,10 @@ namespace Objects
                 tile_id_t id = Get(ivec2(x,y), layer);
                 if (id < 0)
                     continue;
-                r.Quad(ivec2(x,y) * tile_size - cam.pos, ivec2(tile_size)).tex(ivec2(id / sheet_size.x, id % sheet_size.y) * tile_size + sheet_tex_pos);
+
+                auto quad = r.Quad(ivec2(x,y) * tile_size - cam.pos, ivec2(tile_size)).tex(ivec2(id / sheet_size.x, id % sheet_size.y) * tile_size + sheet_tex_pos);
+                if (transparent)
+                    quad.alpha(t);
             }
         }
 
@@ -460,7 +477,10 @@ namespace Objects
         bool enabled = 0;
         ivec2 editor_cam_pos = ivec2(0);
 
-        Map::layer_mem_ptr_t target_layer = Map::back;
+        Map::layer_mem_ptr_t target_layer = Map::mid;
+
+        enum class OtherLayersHandling {show, transparent, hide};
+        OtherLayersHandling other_layers_handling = OtherLayersHandling::show;
 
         bool selecting_tiles = 0;
         float selecting_tiles_alpha = 0;
@@ -470,6 +490,7 @@ namespace Objects
               selecting_tiles_pos_end   = ivec2(0);
         bool selecting_tiles_sheet_hovered = 0,
              selecting_tiles_button_down = 0;
+
 
         class
         {
@@ -549,8 +570,6 @@ namespace Objects
             ivec2 base_offset = ivec2(0);
         }
         grab;
-
-
 
 
         ivec2 mouse_pos = ivec2(0);
@@ -737,6 +756,24 @@ namespace Objects
                             eraser_mode = !eraser_mode;
                             grab.Release();
                         }
+                    }
+
+                    { // Switching layers
+                        if (Keys::_1.pressed())
+                            target_layer = Map::front;
+                        if (Keys::_2.pressed())
+                            target_layer = Map::mid;
+                        if (Keys::_3.pressed())
+                            target_layer = Map::back;
+                    }
+
+                    { // Switching layer transparency
+                        if (Keys::z.pressed())
+                            other_layers_handling = OtherLayersHandling::hide;
+                        if (Keys::x.pressed())
+                            other_layers_handling = OtherLayersHandling::transparent;
+                        if (Keys::c.pressed())
+                            other_layers_handling = OtherLayersHandling::show;
                     }
 
                     { // Starting resize
@@ -934,12 +971,14 @@ namespace Objects
                 }
 
                 { // Text
+                    // Top left
                     std::string top_left;
                     if (!selecting_tiles)
                         top_left = "Editing: tiles";
                     else
                         top_left = "Tile sheet";
 
+                    // Bottom left
                     ivec2 cam_pos = div_ex(cam.pos, tile_size),
                           pos = (grab.Grabbed() ? grab.base_offset : mouse_pos);
                     std::string bottom_left = Str("Map size: [", std::setw(5), map.Size().x, ",", std::setw(5), map.Size().y, "]",
@@ -953,6 +992,7 @@ namespace Objects
                     if (size != ivec2(0))
                         bottom_left += Str("          Size: [", std::setw(3), size.x, ",", std::setw(3), size.y, "]");
 
+                    // Bottom right
                     std::string bottom_right;
                     if (show_help)
                     {
@@ -964,9 +1004,11 @@ namespace Objects
                             bottom_right = "WASD to move\n"
                                            "(+SHIFT - slow, +CTRL - fast, +ALT - faster)\n"
                                            "TAB to open tile sheet\n"
-                                           "RMB to select tiles\n"
                                            "LMB to draw or erase\n"
-                                           "Q,E,R to change modes\n"
+                                           "RMB to select tiles\n"
+                                           "E to switch to eraser mode\n"
+                                           "1,2,3 to change layer\n"
+                                           "Z,X,C to change visiblity of other layers\n"
                                            "ALT+<^>v to resize map\n";
 
                         bottom_right += "F5 to reload textures\n"
@@ -978,14 +1020,33 @@ namespace Objects
                     else
                         bottom_right = "F1 to show help";
 
+                    // Top middle
                     std::string top_middle;
                     if (!selecting_tiles && eraser_mode)
                         top_middle = "Erasing";
 
-                    r.Text(-screen_sz/2 + 2          , top_left     ).preset(Draw::WithBlackOutline).font(font_tiny).align({-1,-1});
-                    r.Text((screen_sz/2-2).mul_x(-1) , bottom_left  ).preset(Draw::WithBlackOutline).font(font_tiny).align({-1,1});
-                    r.Text(screen_sz/2 - 2           , bottom_right ).preset(Draw::WithBlackOutline).font(font_tiny).align({1,1});
-                    r.Text(ivec2(0,-screen_sz.y/2+20), top_middle   ).preset(Draw::WithBlackOutline).align({0,0}).color(mode_color);
+                    // Top right
+                    std::string top_right;
+                    if (!selecting_tiles)
+                        top_right = Str("\r\4"[target_layer == Map::front], "Front\n",
+                                        "\r\4"[target_layer == Map::mid  ], "Middle\n",
+                                        "\r\4"[target_layer == Map::back ], "Back\n");
+
+                    // Top right 2
+                    std::string top_right_2;
+                    if (!selecting_tiles)
+                        top_right_2 = Str("\1Other layers:\n\n",
+                                          "\r\5"[other_layers_handling == OtherLayersHandling::hide       ], "Hidden\n",
+                                          "\r\5"[other_layers_handling == OtherLayersHandling::transparent], "Transparent\n",
+                                          "\r\5"[other_layers_handling == OtherLayersHandling::show       ], "Shown\n");
+
+                    // Render
+                    r.Text(-screen_sz/2 + 2                   , top_left     ).preset(Draw::WithBlackOutline).font(font_tiny).align({-1,-1});
+                    r.Text((screen_sz/2-2).mul_x(-1)          , bottom_left  ).preset(Draw::WithBlackOutline).font(font_tiny).align({-1,1});
+                    r.Text(screen_sz/2 - 2                    , bottom_right ).preset(Draw::WithBlackOutline).font(font_tiny).align({1,1});
+                    r.Text(ivec2(0,-screen_sz.y/2+20)         , top_middle   ).preset(Draw::WithBlackOutline).align({0,0}).color(mode_color);
+                    r.Text((screen_sz/2-2).mul_y(-1)          , top_right    ).preset(Draw::WithColors()).preset(Draw::WithBlackOutline).align({1,-1});
+                    r.Text((screen_sz/2-2).mul_y(-1).add_y(72), top_right_2  ).preset(Draw::WithColors()).preset(Draw::WithBlackOutline).font(font_tiny).align({1,-1});
                 }
             }
 
@@ -1018,6 +1079,34 @@ namespace Objects
                 }
             }
         }
+
+        bool ShouldShowLayer(Map::layer_mem_ptr_t layer)
+        {
+            return other_layers_handling != OtherLayersHandling::hide || layer == target_layer;
+        }
+        bool ShouldMakeLayerTransparent(Map::layer_mem_ptr_t layer)
+        {
+            return other_layers_handling == OtherLayersHandling::transparent && layer != target_layer;
+        }
+    };
+
+    class MapRenderer
+    {
+      public:
+        void Render(const Scene &scene, Map::layer_mem_ptr_t layer)
+        {
+            auto &map = scene.Get<Map>();
+            bool visible = 1, transparent = 0;
+            if (auto map_ed = scene.GetOpt<MapEditor>())
+            {
+                visible     = map_ed->ShouldShowLayer(layer);
+                transparent = map_ed->ShouldMakeLayerTransparent(layer);
+            }
+
+            if (!visible)
+                return;
+            map.Render(scene, layer, transparent);
+        }
     };
 
     class TestObject
@@ -1048,6 +1137,7 @@ namespace Scenes
         s.Add<Background>();
         s.Add<Map>("test.map");
         if (map_editor) s.Add<MapEditor>();
+        s.Add<MapRenderer>();
 
         s.Add<TestObject>();
 
@@ -1064,9 +1154,9 @@ namespace Scenes
         s.SetRender([](const Scene &s)
         {
             s.Get<Background>().Render();
-            s.Get<Map>().Render(s, Map::back);
-            s.Get<Map>().Render(s, Map::mid);
-            s.Get<Map>().Render(s, Map::front);
+            s.Get<MapRenderer>().Render(s, Map::back);
+            s.Get<MapRenderer>().Render(s, Map::mid);
+            s.Get<MapRenderer>().Render(s, Map::front);
             if (auto ptr = s.GetOpt<MapEditor>()) ptr->Render(s);
 
             s.Get<TestObject>().Render(s);

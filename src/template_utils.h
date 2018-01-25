@@ -52,6 +52,48 @@ namespace TemplateUtils
     };
 
 
+    template <typename T> struct ResetOnMove
+    {
+        T obj;
+      public:
+        ResetOnMove() = default;
+        ~ResetOnMove() = default;
+
+        ResetOnMove(const ResetOnMove &) = delete;
+        ResetOnMove &operator=(const ResetOnMove &) = delete;
+
+        ResetOnMove(ResetOnMove &&other) : obj(std::move(other.obj))
+        {
+            other.obj = {};
+        }
+        ResetOnMove &operator=(ResetOnMove &&other)
+        {
+            if (&other == this)
+                return *this;
+            obj = std::move(other.obj);
+            other.obj = {};
+            return *this;
+        }
+
+        template <typename P, typename = std::enable_if_t<!std::is_same_v<ResetOnMove, std::remove_cv_t<std::remove_reference_t<P>>>>> ResetOnMove(P &&param) : obj(std::forward<P>(param)) {}
+        template <typename ...P, typename = std::enable_if_t<(sizeof...(P) > 1)>> ResetOnMove(P &&... params) : obj(std::forward<P>(params)...) {}
+
+        template <typename P, typename = std::enable_if_t<!std::is_same_v<ResetOnMove, std::remove_cv_t<std::remove_reference_t<P>>>>> T &operator=(P &&param)
+        {
+            obj = std::forward<P>(param);
+            return obj;
+        }
+
+        [[nodiscard]] operator       T &()       {return obj;}
+        [[nodiscard]] operator const T &() const {return obj;}
+
+        [[nodiscard]]       T &value()       {return obj;}
+        [[nodiscard]] const T &value() const {return obj;}
+
+        T operator->() {return obj;}
+    };
+
+
     template <typename F, std::size_t ...Seq> static void for_each(std::index_sequence<Seq...>, F &&f)
     {
         (f(std::integral_constant<std::size_t, Seq>{}) , ...);

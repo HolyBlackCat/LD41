@@ -40,12 +40,12 @@ namespace Renderers
         const Graphics::CharMap *ch_map = 0;
 
       public:
-        class Quad_t : TemplateUtils::MoveFunc<Quad_t>
+        class Quad_t
         {
             using ref = Quad_t &&;
 
             // The constructor sets those:
-            decltype(Poly2D::queue) *queue;
+            TemplateUtils::ResetOnMove<decltype(Poly2D::queue) *> queue;
             fvec2 m_pos, m_size;
 
             bool has_texture = 0;
@@ -72,10 +72,6 @@ namespace Renderers
 
             bool m_flip_x = 0, m_flip_y = 0;
 
-            static void OnMove(Quad_t &&from, Quad_t &/*to*/)
-            {
-                from.queue = 0;
-            }
           public:
             Quad_t(decltype(Poly2D::queue) *queue, fvec2 pos, fvec2 size) : queue(queue), m_pos(pos), m_size(size) {}
 
@@ -87,7 +83,7 @@ namespace Renderers
 
             ~Quad_t()
             {
-                if (!queue)
+               if (!queue)
                     return;
 
                 DebugAssert("2D poly renderer: Quad with no texture nor color specified.", has_texture || has_color);
@@ -333,12 +329,12 @@ namespace Renderers
                 return (ref)*this;
             }
         };
-        class Triangle_t : TemplateUtils::MoveFunc<Triangle_t>
+        class Triangle_t
         {
             using ref = Triangle_t &&;
 
             // The constructor sets those:
-            decltype(Poly2D::queue) *queue;
+            TemplateUtils::ResetOnMove<decltype(Poly2D::queue) *> queue;
             fvec2 m_pos, m_vectices[3];
 
             bool has_texture = 0;
@@ -356,10 +352,6 @@ namespace Renderers
             float m_alpha[3] = {1,1,1};
             float m_beta[3] = {1,1,1};
 
-            static void OnMove(Triangle_t &&from, Triangle_t &/*to*/)
-            {
-                from.queue = 0;
-            }
           public:
             Triangle_t(decltype(Poly2D::queue) *queue, fvec2 pos, fvec2 a, fvec2 b, fvec2 c) : queue(queue), m_pos(pos), m_vectices{a, b, c} {}
 
@@ -543,7 +535,7 @@ namespace Renderers
                 return (ref)*this;
             }
         };
-        class Text_t : TemplateUtils::MoveFunc<Text_t>
+        class Text_t
         {
           public:
             struct RenderData
@@ -588,16 +580,11 @@ namespace Renderers
 
             using ref = Text_t &&;
 
-            decltype(Poly2D::queue) *queue; // The constructor sets it.
+            TemplateUtils::ResetOnMove<decltype(Poly2D::queue) *> queue; // The constructor sets it.
 
             State obj_state; // State
 
             uint16_t prev_ch = 0xffff; // This is there because we reset it when changing fonts via callbacks.
-
-            static void OnMove(Text_t &&from, Text_t &/*to*/)
-            {
-                from.queue = 0;
-            }
 
             void Render()
             {
@@ -607,8 +594,8 @@ namespace Renderers
                     return;
 
                 // Those are copied to prevent callbacks from messing them up.
-                decltype(queue) saved_queue = queue;
-                queue = 0;
+                decltype(Poly2D::queue) *saved_queue = queue;
+                queue.value() = 0;
                 ivec2 saved_alignment = obj_state.alignment = sign(obj_state.alignment);
 
                 struct Line
