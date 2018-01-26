@@ -2,6 +2,7 @@
 #define REFLECTION_H_INCLUDED
 
 #include <algorithm>
+#include <bitset>
 #include <cctype>
 #include <cstddef>
 #include <cstdlib>
@@ -543,6 +544,49 @@ namespace Reflection
             return it->first.size();
         }
         // (byte-related functions from arithmetics are used)
+
+        // Bit sets.
+        template <std::size_t S> std::string reflection_interface_primitive_to_string(const std::bitset<S> *obj)
+        {
+            std::string ret;
+            ret.reserve(S);
+            for (std::size_t i = 0; i < S; i++)
+                ret += '0' + obj->test(i);
+            return ret;
+        }
+        template <std::size_t S> std::size_t reflection_interface_primitive_from_string(std::bitset<S> *obj, const char *str)
+        {
+            for (std::size_t i = 0; i < S; i++)
+            {
+                if (str[i] != '0' && str[i] != '1')
+                    return 0;
+                obj->set(i, str[i] == '1');
+            }
+            return S;
+        }
+        template <std::size_t S> std::size_t reflection_interface_primitive_byte_buffer_size(const std::bitset<S> *)
+        {
+            return S;
+        }
+        template <std::size_t S> uint8_t *reflection_interface_primitive_to_bytes(const std::bitset<S> *obj, uint8_t *buf)
+        {
+            for (std::size_t i = 0; i < S; i++)
+                buf[i] = obj->test(i);
+            return buf + S;
+        }
+        template <std::size_t S> const uint8_t *reflection_interface_primitive_from_bytes(std::bitset<S> *obj, const uint8_t *buf, const uint8_t *buf_end)
+        {
+            if (buf_end - buf < std::ptrdiff_t(S))
+                return 0;
+            for (std::size_t i = 0; i < S; i++)
+            {
+                if (buf[i] != 0 && buf[i] != 1)
+                    return 0;
+                obj->set(i, buf[i]);
+            }
+            return buf + S;
+        }
+
 
         // Vectors/matrices
         template <typename T> constexpr std::enable_if_t<Math::type_category<T>::vec_or_mat, std::size_t> reflection_interface_field_count(const T *)
