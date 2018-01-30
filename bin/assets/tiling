@@ -1,18 +1,33 @@
 {
 	groups = [
-		("walls",["green wall"])
+		("walls",["blue wall","orange wall", "metal wall"])
 	],
 	tiles = [
-		{	name = "green wall",
-			layer = mid,
-			variations = [
-				("main",(0,0)),
-				("alt" ,(1,0))
+		{	name = "blue wall",
+			layer = la_mid,
+			variants = [
+				("main",(1,0)),
+				("alt" ,(0,0))
 			],
-			rules = [
-				{from="main", to="alt", chance=1, requires=[{group="", offset=(0,-1)}]}
-			]
-			
+			rules = []
+		},
+		{	name = "orange wall",
+			layer = la_mid,
+			variants = [
+				("main",(0,1)),
+				("alt" ,(1,1))
+			],
+			rules = []
+		},
+		{	name = "metal wall",
+			layer = la_mid,
+			variants = [
+				("main",(0,2)),
+				("h"   ,(1,2)),
+				("v"   ,(2,2)),
+				("fill",(3,2))
+			],
+			rules = []
 		}
 	]
 }

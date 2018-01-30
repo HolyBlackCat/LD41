@@ -4,7 +4,7 @@
 #include <iostream>
 
 constexpr ivec2 screen_sz = ivec2(1920,1080)/3;
-constexpr int tile_size = 16;
+constexpr int tile_size = 12;
 
 Events::AutoErrorHandles error_handlers;
 
@@ -247,15 +247,16 @@ namespace Objects
     class Map
     {
       public:
-        static constexpr uint32_t version_magic = 2; // This should be changed when map binary structure changes.
+        static constexpr uint32_t version_magic = 3; // This should be changed when map binary structure changes.
 
         static constexpr ivec2 sheet_size = ivec2(32), sheet_tex_pos = ivec2(0,512);
 
 
-        using tile_id_t = short;
+        using tile_id_t = u8vec2;
+        inline static constexpr tile_id_t no_tile = u8vec2(-1);
 
         ReflectStruct(Tile, (
-            (tile_id_t)(front,mid,back)(=-1),
+            (tile_id_t)(front,mid,back)(=no_tile),
         ))
 
 
@@ -271,15 +272,16 @@ namespace Objects
 
         enum SafetyMode {Safe, Unsafe};
 
+        ReflectMemberEnum(LayerEnum, (la_front)(la_mid)(la_back)(num_layers))
 
         class TilingSettings
         {
+
             struct Data
             {
-                ReflectMemberEnum(LayerEnum, (front)(mid)(back))
-                static_assert(layer_list[front] == Map::front &&
-                              layer_list[mid  ] == Map::mid   &&
-                              layer_list[back ] == Map::back    );
+                static_assert(layer_list[la_front] == front &&
+                              layer_list[la_mid  ] == mid   &&
+                              layer_list[la_back ] == back    );
 
                 struct Tile
                 {
@@ -289,7 +291,7 @@ namespace Objects
                         {
                             Reflect(Requirement)
                             (
-                                (std::string)(group)(="\1"),
+                                (std::string)(group)(="\1"), // "\1" means same tile. "" means no tile.
                                 (ivec2)(offset),
                             )
                         };
@@ -306,18 +308,54 @@ namespace Objects
                     (
                         (std::string)(name),
                         (LayerEnum)(layer),
-                        (std::vector<std::pair<std::string, ivec2>>)(variations),
-                        (std::vector<Rule>)(rules),
+                        (std::vector<std::pair<std::string, tile_id_t>>)(variants),
+                        (std::vector<Rule>)(rules), // Sorted by `from`.
                     )
                 };
 
+                using group_t = std::pair<std::string, std::vector<std::string>>;
+
                 Reflect(Data)
                 (
-                    (std::vector<std::pair<std::string, std::vector<std::string>>>)(groups),
+                    (std::vector<group_t>)(groups),
                     (std::vector<Tile>)(tiles),
                 )
+
+                std::vector<int> tiles_by_layer[num_layers];
+                std::unordered_map<tile_id_t, int> tile_indices_for_sprites;
             };
             Data data;
+
+            inline static auto comparator_groups = [](const auto &a, const auto &b)
+            {
+                constexpr bool a_is_string = std::is_same_v<std::string, std::remove_cv_t<std::remove_reference_t<decltype(a)>>>;
+                constexpr bool b_is_string = std::is_same_v<std::string, std::remove_cv_t<std::remove_reference_t<decltype(b)>>>;
+
+                if constexpr (a_is_string)
+                    return a < b.first;
+                else if constexpr (b_is_string)
+                    return a.first < b;
+                else
+                    return a.first < b.first;
+            };
+            inline static auto comparator_groups_eq = [](const Data::group_t &a, const Data::group_t &b){return a.first == b.first;};
+
+            inline static auto comparator_tiles = [](const auto &a, const auto &b)
+            {
+                constexpr bool a_is_string = std::is_same_v<std::string, std::remove_cv_t<std::remove_reference_t<decltype(a)>>>;
+                constexpr bool b_is_string = std::is_same_v<std::string, std::remove_cv_t<std::remove_reference_t<decltype(b)>>>;
+
+                if constexpr (a_is_string)
+                    return a < b.name;
+                else if constexpr (b_is_string)
+                    return a.name < b;
+                else
+                    return a.name < b.name;
+            };
+            inline static auto comparator_tiles_eq = [](const Data::Tile &a, const Data::Tile &b){return a.name == b.name;};
+
+            inline static auto comparator_variants = comparator_groups; // Compares by `.first` too.
+            inline static auto comparator_variants_eq = [](const std::pair<std::string, tile_id_t> &a, const std::pair<std::string, tile_id_t> &b){return a.first == b.first;};
 
           public:
             TilingSettings(std::string file_name)
@@ -329,20 +367,111 @@ namespace Objects
                 if (!Reflection::from_string(data, (char *)file.Data(), Reflection::overwrite, context))
                     Program::Error(Str("Unable to load tiling settings.\n", context.to_string()));
 
-                std::sort(data.groups.begin(), data.groups.end(), [](auto &a, auto &b){return a.first < b.first;});
-                for (auto &it : data.groups)
+                std::sort(data.groups.begin(), data.groups.end(), comparator_groups);                                                          // Sort groups
+                if (auto it = std::adjacent_find(data.groups.begin(), data.groups.end(), comparator_groups_eq); it != data.groups.end())       // Check for duplicate groups
+                    Program::Error(Str("Duplicate tile group named `", it->first, "`."));
+                for (auto &it : data.groups)                                                                                                   // Sort group contents
                     std::sort(it.second.begin(), it.second.end());
 
-                std::sort(data.tiles.begin(), data.tiles.end(), [](auto &a, auto &b){return a.name < b.name;});
+                std::sort(data.tiles.begin(), data.tiles.end(), comparator_tiles);                                                             // Sort tiles
+                if (auto it = std::adjacent_find(data.tiles.begin(), data.tiles.end(), comparator_tiles_eq); it != data.tiles.end())           // Check for duplicate tiles
+                    Program::Error(Str("Duplicate tile named `", it->name, "`."));
                 for (auto &it : data.tiles)
                 {
-                    std::sort(it.variations.begin(), it.variations.end(), [](auto &a, auto &b){return a.first < b.first;});
-                    std::sort(it.rules.begin(), it.rules.end(), [](auto &a, auto &b){return a.from < b.from;});
+                    if (it.variants.empty())
+                        Program::Error(Str("Tile named `", it.name, "` has no variants."));
+                    std::sort(it.variants.begin(), it.variants.end(), comparator_variants);                                                    // Sort tile variants
+                    if (auto va = std::adjacent_find(it.variants.begin(), it.variants.end(), comparator_variants_eq); va != it.variants.end()) // Check for duplicate variants
+                        Program::Error(Str("Duplicate variant named `", va->first, "` for tile `", it.name, "`."));
+
+                    std::sort(it.rules.begin(), it.rules.end(), [](auto &a, auto &b){return a.from < b.from;});                                // Sort tile rules
+                    // No duplicate tests for rules.
+                }
+
+                // Check if names of tiles in groups are real
+                for (const auto &group : data.groups)
+                for (const auto &name : group.second)
+                {
+                    auto it = std::lower_bound(data.tiles.begin(), data.tiles.end(), name, comparator_tiles);
+                    if (it == data.tiles.end() || it->name != name)
+                        Program::Error(Str("Group `", group.first, "` contains non-existent tile named `", name, "`."));
+                }
+
+                // Getting additional information
+                int index = 0;
+                for (const auto &it : data.tiles)
+                {
+                    // Divide tiles by layer
+                    if (it.layer < 0 || it.layer >= num_layers)
+                        Program::Error(Str("Invalid layer enum for tile `", it.name, "`."));
+                    data.tiles_by_layer[it.layer].push_back(index);
+
+                    // Get tile indices for sprites
+                    for (const auto &variant : it.variants)
+                    {
+                        bool inserted = data.tile_indices_for_sprites.insert({variant.second, index}).second;
+                        if (!inserted)
+                            Program::Error(Str("Variation `", variant.first, "` of tile `", it.name, "` uses the same sprite as one of the variants of `", data.tiles[data.tile_indices_for_sprites[variant.second]].name, "`."));
+                    }
+
+                    index++;
                 }
             }
-        };
-        inline static TilingSettings tiling_settings{"assets/tiling"};
 
+            int GetGroupIndex(std::string name) const
+            {
+                auto it = std::lower_bound(data.groups.begin(), data.groups.end(), name, comparator_groups);
+                if (it == data.groups.end() || it->first != name)
+                    Program::Error(Str("Invalid tile group name `", name, "`."));
+                return it - data.groups.begin();
+            }
+            bool IsTileInGroup(int group_index, std::string tile_name) const
+            {
+                const auto &group = data.groups[group_index].second;
+                auto it = std::lower_bound(group.begin(), group.end(), tile_name);
+                return it != group.end() && *it == tile_name;
+            }
+
+            int GetTileIndex(std::string name) const
+            {
+                auto it = std::lower_bound(data.tiles.begin(), data.tiles.end(), name, comparator_tiles);
+                if (it == data.tiles.end() || it->name != name)
+                    Program::Error(Str("Invalid tile name `", name, "`."));
+                return it - data.tiles.begin();
+            }
+            int GetTileIndexForSprite(tile_id_t sprite) const
+            {
+                return data.tile_indices_for_sprites.find(sprite)->second;
+            }
+            const std::vector<int> &GetTileIndicesForLayer(LayerEnum layer) const
+            {
+                return data.tiles_by_layer[layer];
+            }
+            const std::string GetTileName(int index) const
+            {
+                return data.tiles[index].name;;
+            }
+
+            int GetVariantIndex(int tile_index, std::string variant_name) const
+            {
+                const auto &variants = data.tiles[tile_index].variants;
+                auto it = std::lower_bound(variants.begin(), variants.end(), variant_name, comparator_variants);
+                if (it == variants.end() || it->first != variant_name)
+                    Program::Error(Str("Invalid variant name `", variant_name, "` for tile `", GetTileName(tile_index), "`."));
+                return it - variants.begin();
+            }
+            tile_id_t GetVariantSpritePos(int tile_index, int variant_index) const
+            {
+                return data.tiles[tile_index].variants[variant_index].second;
+            }
+            static ivec2 SpritePosToTextureCoords(tile_id_t tile_pos)
+            {
+                return tile_pos * tile_size + sheet_tex_pos;
+            }
+
+            inline static constexpr const char *default_variant_name = "main";
+        };
+        inline static TilingSettings tiling{"assets/tiling"};
 
       private:
         std::string file_name;
@@ -468,10 +597,10 @@ namespace Objects
             for (int x = first.x; x <= last.x; x++)
             {
                 tile_id_t id = Get(ivec2(x,y), layer);
-                if (id < 0)
+                if (id == no_tile)
                     continue;
 
-                auto quad = r.Quad(ivec2(x,y) * tile_size - cam.pos, ivec2(tile_size)).tex(ivec2(id / sheet_size.x, id % sheet_size.y) * tile_size + sheet_tex_pos);
+                auto quad = r.Quad(ivec2(x,y) * tile_size - cam.pos, ivec2(tile_size)).tex(tiling.SpritePosToTextureCoords(id));
                 if (transparent)
                     quad.alpha(t);
             }
@@ -553,19 +682,14 @@ namespace Objects
         bool enabled = 0;
         ivec2 editor_cam_pos = ivec2(0);
 
-        Map::layer_mem_ptr_t target_layer = Map::mid;
+        Map::LayerEnum target_layer_enum = Map::la_mid;
+        Map::layer_mem_ptr_t target_layer = Map::layer_list[target_layer_enum];
 
         enum class OtherLayersHandling {show, transparent, hide};
         OtherLayersHandling other_layers_handling = OtherLayersHandling::show;
 
         bool selecting_tiles = 0;
         float selecting_tiles_alpha = 0;
-
-        ivec2 selecting_tiles_sheet_offset = ivec2(0),
-              selecting_tiles_pos_start = ivec2(0),
-              selecting_tiles_pos_end   = ivec2(0);
-        bool selecting_tiles_sheet_hovered = 0,
-             selecting_tiles_button_down = 0;
 
 
         class
@@ -584,18 +708,6 @@ namespace Objects
                 for (int y = 0; y < size.y; y++)
                 for (int x = 0; x < size.x; x++)
                     tiles[x + y * size.x] = map.Get(ivec2(x,y) + a, layer);
-            }
-            void Grab(ivec2 a, ivec2 b)
-            {
-                if (a.x > b.x) std::swap(a.x, b.x);
-                if (a.y > b.y) std::swap(a.y, b.y);
-
-                size = b - a + 1;
-                tiles.resize(size.product());
-
-                for (int y = 0; y < size.y; y++)
-                for (int x = 0; x < size.x; x++)
-                    tiles[x + y * size.x] = (ivec2(x,y) + a).mul_x(Map::sheet_size.y).sum();
             }
             void Release()
             {
@@ -636,10 +748,10 @@ namespace Objects
                 for (int x = render_offset.x; x < render_size.x; x++)
                 {
                     Map::tile_id_t id = tiles[x + size.x * y];
-                    if (id < 0)
+                    if (id == Map::no_tile)
                         r.Quad((ivec2(x,y) + base_offset) * tile_size - cam_pos + air_margin, ivec2(tile_size-air_margin*2)).color(fvec3(t)).alpha(air_alpha);
                     else
-                        r.Quad((ivec2(x,y) + base_offset) * tile_size - cam_pos, ivec2(tile_size)).tex(ivec2(id / Map::sheet_size.x, id % Map::sheet_size.y) * tile_size + Map::sheet_tex_pos).color(fvec3(t)).mix(1-highlight).alpha(alpha);
+                        r.Quad((ivec2(x,y) + base_offset) * tile_size - cam_pos, ivec2(tile_size)).tex(Map::tiling.SpritePosToTextureCoords(id)).color(fvec3(t)).mix(1-highlight).alpha(alpha);
                 }
             }
 
@@ -771,7 +883,7 @@ namespace Objects
                         selecting_tiles = 1;
                         eraser_mode = 0;
                     }
-                    else if (selecting_tiles && Keys::tab.pressed() && !selecting_tiles_button_down)
+                    else if (selecting_tiles && Keys::tab.pressed())
                         selecting_tiles = 0;
                     selecting_tiles_alpha = clamp(selecting_tiles_alpha + (selecting_tiles ? 1 : -1) * 0.12, 0, 1);
                 }
@@ -802,31 +914,7 @@ namespace Objects
                     cam.pos = editor_cam_pos;
                 }
 
-                // Tile sheet
-                if (selecting_tiles)
-                {
-                    { // Tile sheet camera panning
-                        ivec2 sheet_half_extent = Map::sheet_size * tile_size/2;
-                        clamp_assign(selecting_tiles_sheet_offset -= wasd * 2, -sheet_half_extent, sheet_half_extent);
-                    }
 
-                    ivec2 cur_pos = div_ex(mouse.pos() - selecting_tiles_sheet_offset + Map::sheet_size * tile_size/2, tile_size);
-                    selecting_tiles_sheet_hovered = (cur_pos >= 0).all() && (cur_pos < Map::sheet_size).all();
-                    cur_pos = clamp(cur_pos, 0, Map::sheet_size-1);
-
-                    selecting_tiles_pos_end = cur_pos;
-                    if (mouse.left.pressed() && selecting_tiles_sheet_hovered)
-                    {
-                        selecting_tiles_button_down = 1;
-                        selecting_tiles_pos_start = cur_pos;
-                    }
-                    if (selecting_tiles_button_down && mouse.left.released())
-                    {
-                        selecting_tiles_button_down = 0;
-                        grab.Grab(selecting_tiles_pos_start, selecting_tiles_pos_end);
-                        selecting_tiles = 0;
-                    }
-                }
 
                 // Editing the map
                 if (!selecting_tiles) // Not `else`.
@@ -840,12 +928,15 @@ namespace Objects
                     }
 
                     { // Switching layers
+                        auto old_target_layer_enum = target_layer_enum;
                         if (Keys::_1.pressed())
-                            target_layer = Map::front;
+                            target_layer_enum = Map::la_front;
                         if (Keys::_2.pressed())
-                            target_layer = Map::mid;
+                            target_layer_enum = Map::la_mid;
                         if (Keys::_3.pressed())
-                            target_layer = Map::back;
+                            target_layer_enum = Map::la_back;
+                        if (old_target_layer_enum != target_layer_enum)
+                            target_layer = Map::layer_list[target_layer_enum];
                     }
 
                     { // Switching layer transparency
@@ -927,7 +1018,7 @@ namespace Objects
 
                                     for (int y = a.y; y <= b.y; y++)
                                     for (int x = a.x; x <= b.x; x++)
-                                        map.Set(ivec2(x,y), target_layer, -1);
+                                        map.Set(ivec2(x,y), target_layer, Map::no_tile);
                                 }
                             }
                         }
@@ -948,7 +1039,7 @@ namespace Objects
 
                     // Erasing
                     if (mouse.left.down() && !grab.Grabbed() && !map_selection_button_down && (mouse_pos_changed || mouse.left.pressed()) && map_selection_map_hovered)
-                        map.Set(mouse_pos, target_layer, -1);
+                        map.Set(mouse_pos, target_layer, Map::no_tile);
                 }
             }
         }
@@ -1003,7 +1094,7 @@ namespace Objects
                 {
                     constexpr int cursor_width = 4, cursor_length = 4, cursor_corner_size = 4, cursor_outline_size = 2;
 
-                    Draw::Rect(mouse_pos * tile_size - cam.pos, ivec2(0), ivec2(16), cursor_outline_size, fvec3(1));
+                    Draw::Rect(mouse_pos * tile_size - cam.pos, ivec2(0), ivec2(tile_size), cursor_outline_size, fvec3(1));
 
                     int i = 0;
                     for (const auto &m : {fmat2(1,0,0,1),fmat2(0,-1,1,0),fmat2(-1,0,0,-1),fmat2(0,1,-1,0)})
@@ -1018,46 +1109,36 @@ namespace Objects
                 // Tile selector
                 if (selecting_tiles_alpha)
                 {
-                    // Background
-                    ivec2 half_extent_tiles = (screen_sz / 2 + tile_size - 1) / tile_size;
-                    for (int y = -half_extent_tiles.y; y < half_extent_tiles.y; y++)
-                    for (int x = -half_extent_tiles.x; x < half_extent_tiles.x; x++)
-                        r.Quad(ivec2(x,y) * tile_size, ivec2(tile_size)).tex({0,0}).alpha(selecting_tiles_alpha);
+                    constexpr ivec2 tile_buttons_per_screen = ivec2(6,16);
+                    constexpr int text_offset = 12;
+                    constexpr ivec2 tile_button_sz = screen_sz / tile_buttons_per_screen;
 
-                    // Tile sheet
-                    r.Quad(selecting_tiles_sheet_offset, Map::sheet_size * tile_size).tex(Map::sheet_tex_pos).alpha(selecting_tiles_alpha).center();
+                    // Dark background
+                    r.Quad(-screen_sz/2, screen_sz).color(fvec3(0)).alpha(0.5 * selecting_tiles_alpha);
 
-                    // Selection rectangle
-                    if (selecting_tiles_sheet_hovered || selecting_tiles_button_down)
+                    const auto &available_tiles = Map::tiling.GetTileIndicesForLayer(target_layer_enum);
+                    int count = available_tiles.size();
+
+                    // Buttons
+                    int index = 0;
+                    for (int x = 0; x < tile_buttons_per_screen.x && index < count; x++)
+                    for (int y = 0; y < tile_buttons_per_screen.y && index < count; y++)
                     {
-                        ivec2 pos = selecting_tiles_sheet_offset - Map::sheet_size * tile_size/2;
+                        ivec2 base = tile_button_sz * ivec2(x,y) - screen_sz/2;
+                        ivec2 main_sprite_pos = Map::tiling.SpritePosToTextureCoords(Map::tiling.GetVariantSpritePos(index, Map::tiling.GetVariantIndex(index, Map::tiling.default_variant_name)));
 
-                        ivec2 at, bt;
-                        if (selecting_tiles_button_down)
-                        {
-                            at = selecting_tiles_pos_start,
-                            bt = selecting_tiles_pos_end;
+                        r.Quad(base + tile_button_sz.y/2, ivec2(tile_size)).tex(main_sprite_pos).alpha(selecting_tiles_alpha).center();
+                        r.Text(base + tile_button_sz.y/2 + ivec2(text_offset,0), Map::tiling.GetTileName(index)).preset(Draw::WithBlackOutline).align_h(-1).alpha(selecting_tiles_alpha);
 
-                            if (at.x > bt.x) std::swap(at.x, bt.x);
-                            if (at.y > bt.y) std::swap(at.y, bt.y);
-                        }
-                        else
-                            at = bt = selecting_tiles_pos_end;
-
-                        constexpr int width = 2;
-
-                        for (int i = 0; i <= 1; i++)
-                            Draw::Rect(pos - ivec2(i*width), at * tile_size, (bt - at + 1) * tile_size + width, 2, fvec3(i), (selecting_tiles_button_down ? 1 : 0.5) * selecting_tiles_alpha);
+                        index++;
                     }
                 }
 
-                { // Text
+                // Text
+                if (!selecting_tiles)
+                {
                     // Top left
-                    std::string top_left;
-                    if (!selecting_tiles)
-                        top_left = "Editing: tiles";
-                    else
-                        top_left = "Tile sheet";
+                    std::string top_left = "Editing: tiles";
 
                     // Bottom left
                     ivec2 cam_pos = div_ex(cam.pos, tile_size),
@@ -1077,26 +1158,20 @@ namespace Objects
                     std::string bottom_right;
                     if (show_help)
                     {
-                        if (selecting_tiles)
-                            bottom_right = "WASD to move\n"
-                                           "Hold LMB to select\n"
-                                           "TAB to close\n";
-                        else
-                            bottom_right = "WASD to move\n"
-                                           "(+SHIFT - slow, +CTRL - fast, +ALT - faster)\n"
-                                           "TAB to open tile sheet\n"
-                                           "LMB to draw or erase\n"
-                                           "RMB to select tiles\n"
-                                           "E to switch to eraser mode\n"
-                                           "1,2,3 to change layer\n"
-                                           "Z,X,C to change visiblity of other layers\n"
-                                           "ALT+<^>v to resize map\n";
-
-                        bottom_right += "F5 to reload textures\n"
-                                        "SPACE to save\n"
-                                        "CTRL+F5 to reload\n"
-                                        "(+ALT to save/load in forward-compatible mode)\n"
-                                        "F1 to hide this text";
+                        bottom_right = "WASD to move\n"
+                                       "(+SHIFT - slow, +CTRL - fast, +ALT - faster)\n"
+                                       "TAB to open tile sheet\n"
+                                       "LMB to draw or erase\n"
+                                       "RMB to select tiles\n"
+                                       "E to switch to eraser mode\n"
+                                       "1,2,3 to change layer\n"
+                                       "Z,X,C to change visiblity of other layers\n"
+                                       "ALT+<^>v to resize map\n"
+                                       "F5 to reload textures\n"
+                                       "SPACE to save\n"
+                                       "CTRL+F5 to reload\n"
+                                       "(+ALT to save/load in forward-compatible mode)\n"
+                                       "F1 to hide this text";
                     }
                     else
                         bottom_right = "F1 to show help";
@@ -1107,19 +1182,15 @@ namespace Objects
                         top_middle = "Erasing";
 
                     // Top right
-                    std::string top_right;
-                    if (!selecting_tiles)
-                        top_right = Str("\r\4"[target_layer == Map::front], "Front\n",
-                                        "\r\4"[target_layer == Map::mid  ], "Middle\n",
-                                        "\r\4"[target_layer == Map::back ], "Back\n");
+                    std::string top_right = Str("\r\4"[target_layer == Map::front], "Front\n",
+                                                "\r\4"[target_layer == Map::mid  ], "Middle\n",
+                                                "\r\4"[target_layer == Map::back ], "Back\n");
 
                     // Top right 2
-                    std::string top_right_2;
-                    if (!selecting_tiles)
-                        top_right_2 = Str("\1Other layers:\n\n",
-                                          "\r\5"[other_layers_handling == OtherLayersHandling::hide       ], "Hidden\n",
-                                          "\r\5"[other_layers_handling == OtherLayersHandling::transparent], "Transparent\n",
-                                          "\r\5"[other_layers_handling == OtherLayersHandling::show       ], "Shown\n");
+                    std::string top_right_2 = Str("\1Other layers:\n\n",
+                                                  "\r\5"[other_layers_handling == OtherLayersHandling::hide       ], "Hidden\n",
+                                                  "\r\5"[other_layers_handling == OtherLayersHandling::transparent], "Transparent\n",
+                                                  "\r\5"[other_layers_handling == OtherLayersHandling::show       ], "Shown\n");
 
                     // Render
                     r.Text(-screen_sz/2 + 2                   , top_left     ).preset(Draw::WithBlackOutline).font(font_tiny).align({-1,-1});

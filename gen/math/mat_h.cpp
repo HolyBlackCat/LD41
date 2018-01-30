@@ -6,7 +6,7 @@
 #include <sstream>
 
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
-#define VERSION "2.5.7"
+#define VERSION "2.5.8"
 // ---------------------------- UPDATE THIS WHEN YOU CHANGE THE CODE
 
 std::ofstream out_file("mat.h");
@@ -201,6 +201,11 @@ template <unsigned int D, typename T, typename TT> struct larger_type_t_impl<vec
 {
 using type = vec<D, larger_type_t<T,TT>>;
 };
+
+inline void hash_combine(std::size_t &a, std::size_t b)
+{
+a ^= b + 0x9e3779b9 + (a << 6) + (a >> 2); // From Boost.
+}
 }
 )";
     }
@@ -1821,6 +1826,7 @@ using Strings::num_from_string_mid;
 namespace std
 {
 )";
+        // std::less
         for (int i = 2; i <= 4; i++)
         {
             r R"(
@@ -1829,7 +1835,7 @@ template <typename T> struct less<Math::vec)" << i << R"(<T>>
 using result_type = bool;
 using first_argument_type = Math::vec)" << i << R"(<T>;
 using second_argument_type = Math::vec)" << i << R"(<T>;
-constexpr bool operator()(const first_argument_type &a, const second_argument_type &b) const
+constexpr bool operator()(const Math::vec)" << i << R"(<T> &a, const Math::vec)" << i << R"(<T> &b) const
 {
 )";
             for (int j = 0; j < i; j++)
@@ -1841,6 +1847,29 @@ return 0;
 };
 )";
         }
+        l '\n';
+
+        // std::hash
+        for (int i = 2; i <= 4; i++)
+        {
+            r R"(
+template <typename T> struct hash<Math::vec)" << i << R"(<T>>
+{
+using result_type = std::size_t;
+using argument_type = Math::vec)" << i << R"(<T>;
+std::size_t operator()(const Math::vec)" << i << R"(<T> &v) const
+{
+std::size_t ret = std::hash<decltype(v.x)>{}(v.x);
+)";
+            for (int j = 1; j < i; j++)
+                l "Math::hash_combine(ret, std::hash<decltype(v.x)>{}(v." << field_names_main[j] << "));\n";
+            r R"(
+return ret;
+}
+};
+)";
+        }
+
         r R"(
 }
 )";

@@ -1,7 +1,7 @@
 #ifndef MAT_H_INCLUDED
 #define MAT_H_INCLUDED
 
-// Version 2.5.7 by HolyBlackCat
+// Version 2.5.8 by HolyBlackCat
 
 #include <algorithm>
 #include <cctype>
@@ -113,6 +113,11 @@ namespace Math
         {
             using type = vec<D, larger_type_t<T,TT>>;
         };
+
+        inline void hash_combine(std::size_t &a, std::size_t b)
+        {
+            a ^= b + 0x9e3779b9 + (a << 6) + (a >> 2); // From Boost.
+        }
     }
 
     inline namespace Strings
@@ -2350,7 +2355,7 @@ namespace std
         using result_type = bool;
         using first_argument_type = Math::vec2<T>;
         using second_argument_type = Math::vec2<T>;
-        constexpr bool operator()(const first_argument_type &a, const second_argument_type &b) const
+        constexpr bool operator()(const Math::vec2<T> &a, const Math::vec2<T> &b) const
         {
             if (a.x < b.x) return 1;
             if (a.x > b.x) return 0;
@@ -2364,7 +2369,7 @@ namespace std
         using result_type = bool;
         using first_argument_type = Math::vec3<T>;
         using second_argument_type = Math::vec3<T>;
-        constexpr bool operator()(const first_argument_type &a, const second_argument_type &b) const
+        constexpr bool operator()(const Math::vec3<T> &a, const Math::vec3<T> &b) const
         {
             if (a.x < b.x) return 1;
             if (a.x > b.x) return 0;
@@ -2380,7 +2385,7 @@ namespace std
         using result_type = bool;
         using first_argument_type = Math::vec4<T>;
         using second_argument_type = Math::vec4<T>;
-        constexpr bool operator()(const first_argument_type &a, const second_argument_type &b) const
+        constexpr bool operator()(const Math::vec4<T> &a, const Math::vec4<T> &b) const
         {
             if (a.x < b.x) return 1;
             if (a.x > b.x) return 0;
@@ -2391,6 +2396,43 @@ namespace std
             if (a.w < b.w) return 1;
             if (a.w > b.w) return 0;
             return 0;
+        }
+    };
+
+    template <typename T> struct hash<Math::vec2<T>>
+    {
+        using result_type = std::size_t;
+        using argument_type = Math::vec2<T>;
+        std::size_t operator()(const Math::vec2<T> &v) const
+        {
+            std::size_t ret = std::hash<decltype(v.x)>{}(v.x);
+            Math::hash_combine(ret, std::hash<decltype(v.x)>{}(v.y));
+            return ret;
+        }
+    };
+    template <typename T> struct hash<Math::vec3<T>>
+    {
+        using result_type = std::size_t;
+        using argument_type = Math::vec3<T>;
+        std::size_t operator()(const Math::vec3<T> &v) const
+        {
+            std::size_t ret = std::hash<decltype(v.x)>{}(v.x);
+            Math::hash_combine(ret, std::hash<decltype(v.x)>{}(v.y));
+            Math::hash_combine(ret, std::hash<decltype(v.x)>{}(v.z));
+            return ret;
+        }
+    };
+    template <typename T> struct hash<Math::vec4<T>>
+    {
+        using result_type = std::size_t;
+        using argument_type = Math::vec4<T>;
+        std::size_t operator()(const Math::vec4<T> &v) const
+        {
+            std::size_t ret = std::hash<decltype(v.x)>{}(v.x);
+            Math::hash_combine(ret, std::hash<decltype(v.x)>{}(v.y));
+            Math::hash_combine(ret, std::hash<decltype(v.x)>{}(v.z));
+            Math::hash_combine(ret, std::hash<decltype(v.x)>{}(v.w));
+            return ret;
         }
     };
 }
