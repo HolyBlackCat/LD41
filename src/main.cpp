@@ -248,6 +248,7 @@ namespace Objects
     {
       public:
         static constexpr uint32_t version_magic = 2; // This should be changed when map binary structure changes.
+
         static constexpr ivec2 sheet_size = ivec2(32), sheet_tex_pos = ivec2(0,512);
 
 
@@ -269,6 +270,79 @@ namespace Objects
 
 
         enum SafetyMode {Safe, Unsafe};
+
+
+        class TilingSettings
+        {
+            struct Data
+            {
+                ReflectMemberEnum(LayerEnum, (front)(mid)(back))
+                static_assert(layer_list[front] == Map::front &&
+                              layer_list[mid  ] == Map::mid   &&
+                              layer_list[back ] == Map::back    );
+
+                struct Tile
+                {
+                    struct Rule
+                    {
+                        struct Requirement
+                        {
+                            Reflect(Requirement)
+                            (
+                                (std::string)(group)(="\1"),
+                                (ivec2)(offset),
+                            )
+                        };
+
+                        Reflect(Rule)
+                        (
+                            (std::string)(from, to),
+                            (float)(chance)(=1),
+                            (std::vector<Requirement>)(requires),
+                        )
+                    };
+
+                    Reflect(Tile)
+                    (
+                        (std::string)(name),
+                        (LayerEnum)(layer),
+                        (std::vector<std::pair<std::string, ivec2>>)(variations),
+                        (std::vector<Rule>)(rules),
+                    )
+                };
+
+                Reflect(Data)
+                (
+                    (std::vector<std::pair<std::string, std::vector<std::string>>>)(groups),
+                    (std::vector<Tile>)(tiles),
+                )
+            };
+            Data data;
+
+          public:
+            TilingSettings(std::string file_name)
+            {
+                Utils::MemoryFile file(file_name);
+
+                Reflection::ParsingErrorContext context;
+
+                if (!Reflection::from_string(data, (char *)file.Data(), Reflection::overwrite, context))
+                    Program::Error(Str("Unable to load tiling settings.\n", context.to_string()));
+
+                std::sort(data.groups.begin(), data.groups.end(), [](auto &a, auto &b){return a.first < b.first;});
+                for (auto &it : data.groups)
+                    std::sort(it.second.begin(), it.second.end());
+
+                std::sort(data.tiles.begin(), data.tiles.end(), [](auto &a, auto &b){return a.name < b.name;});
+                for (auto &it : data.tiles)
+                {
+                    std::sort(it.variations.begin(), it.variations.end(), [](auto &a, auto &b){return a.first < b.first;});
+                    std::sort(it.rules.begin(), it.rules.end(), [](auto &a, auto &b){return a.from < b.from;});
+                }
+            }
+        };
+        inline static TilingSettings tiling_settings{"assets/tiling"};
+
 
       private:
         std::string file_name;
@@ -472,6 +546,8 @@ namespace Objects
         }
     };
 
+
+
     class MapEditor
     {
         bool enabled = 0;
@@ -630,6 +706,11 @@ namespace Objects
         {
             auto &map = scene.Get<Map>();
             auto &cam = scene.Get<Camera>();
+
+            { // Save on exit
+                if (Events::ExitRequested())
+                    SaveMap(scene);
+            }
 
             { // Timers
                 if (message_alpha > 0)

@@ -556,12 +556,14 @@ namespace Reflection
         }
         template <std::size_t S> std::size_t reflection_interface_primitive_from_string(std::bitset<S> *obj, const char *str)
         {
+            std::bitset<S> new_obj;
             for (std::size_t i = 0; i < S; i++)
             {
                 if (str[i] != '0' && str[i] != '1')
                     return 0;
-                obj->set(i, str[i] == '1');
+                new_obj.set(i, str[i] == '1');
             }
+            *obj = new_obj;
             return S;
         }
         template <std::size_t S> std::size_t reflection_interface_primitive_byte_buffer_size(const std::bitset<S> *)
@@ -957,15 +959,6 @@ namespace Reflection
                 return ret;
             }
 
-            void push(const std::string &str)
-            {
-                stack.push_back(str);
-            }
-            void pop()
-            {
-                stack.pop_back();
-            }
-
             void error_expected_char(char exp, char got)
             {
                 message = "Expected `" + Strings::char_escape_seq(exp) + "` but got `" + Strings::char_escape_seq(got) + "`.";
@@ -981,6 +974,11 @@ namespace Reflection
           public:
             ParsingErrorContextRef(std::nullptr_t) : ptr(0) {}
             ParsingErrorContextRef(ParsingErrorContext &con) : ptr(&con) {}
+
+            explicit operator bool() const
+            {
+                return ptr != 0;
+            }
 
             void push(const std::string &str)
             {
@@ -1454,6 +1452,7 @@ namespace Reflection
                             }
 
                             bool first = 1;
+                            int index = 0;
 
                             while (*str != ']')
                             {
@@ -1468,7 +1467,7 @@ namespace Reflection
                                 else
                                     first = 0;
 
-                                con.push(str);
+                                if (con) con.push(Reflection::to_string(index++));
                                 std::size_t len = ptr->insert(0, 1, str, con);
                                 if (len == 0)
                                     return 0; // The error message here comes from the nested `from_string()` call.

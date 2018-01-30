@@ -1,0 +1,18 @@
+{
+	groups = [
+		("walls",["green wall"])
+	],
+	tiles = [
+		{	name = "green wall",
+			layer = mid,
+			variations = [
+				("main",(0,0)),
+				("alt" ,(1,0))
+			],
+			rules = [
+				{from="main", to="alt", chance=1, requires=[{group="", offset=(0,-1)}]}
+			]
+			
+		}
+	]
+}
