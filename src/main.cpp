@@ -209,13 +209,13 @@ namespace Draw
         buf.Draw(Graphics::triangles);
     }
 
-    void Rect(ivec2 offset, ivec2 a, ivec2 b, int width, fvec3 color, float alpha = 1, float beta = 1)
+    void Rect(ivec2 pos, ivec2 size, int width, fvec3 color, float alpha = 1, float beta = 1)
     {
-        b += a;
-        r.Quad(ivec2(a.x-width,a.y) + offset, ivec2(b.x,a.y-width) + offset).absolute().color(color).alpha(alpha).beta(beta);
-        r.Quad(ivec2(a.x,a.y) + offset, ivec2(a.x-width,b.y+width) + offset).absolute().color(color).alpha(alpha).beta(beta);
-        r.Quad(ivec2(a.x,b.y) + offset, ivec2(b.x+width,b.y+width) + offset).absolute().color(color).alpha(alpha).beta(beta);
-        r.Quad(ivec2(b.x,a.y-width) + offset, ivec2(b.x+width,b.y) + offset).absolute().color(color).alpha(alpha).beta(beta);
+        ivec2 a = pos, b = pos + size;
+        r.Quad(ivec2(a.x-width,a.y), ivec2(b.x,a.y-width)).absolute().color(color).alpha(alpha).beta(beta);
+        r.Quad(ivec2(a.x,a.y), ivec2(a.x-width,b.y+width)).absolute().color(color).alpha(alpha).beta(beta);
+        r.Quad(ivec2(a.x,b.y), ivec2(b.x+width,b.y+width)).absolute().color(color).alpha(alpha).beta(beta);
+        r.Quad(ivec2(b.x,a.y-width), ivec2(b.x+width,b.y)).absolute().color(color).alpha(alpha).beta(beta);
     }
 }
 
@@ -276,7 +276,6 @@ namespace Objects
 
         class TilingSettings
         {
-
             struct Data
             {
                 static_assert(layer_list[la_front] == front &&
@@ -308,9 +307,12 @@ namespace Objects
                     (
                         (std::string)(name),
                         (LayerEnum)(layer),
+                        (std::string)(va_default,va_display),
                         (std::vector<std::pair<std::string, tile_id_t>>)(variants),
                         (std::vector<Rule>)(rules), // Sorted by `from`.
                     )
+
+                    int index = 0;
                 };
 
                 using group_t = std::pair<std::string, std::vector<std::string>>;
@@ -362,10 +364,15 @@ namespace Objects
             {
                 Utils::MemoryFile file(file_name);
 
-                Reflection::ParsingErrorContext context;
+                std::string error_message;
+                if (auto ptr = Reflection::from_string(data, (char *)file.Data(), &error_message); ptr != (char *)file.Data() + file.Size())
+                    Program::Error(Str("Unable to load tiling settings:\n", (ptr == 0 ? error_message : "Extra data at the end of input.")));
 
-                if (!Reflection::from_string(data, (char *)file.Data(), Reflection::overwrite, context))
-                    Program::Error(Str("Unable to load tiling settings.\n", context.to_string()));
+                { // Assign indices to tiles.
+                    int index = 0;
+                    for (auto &it : data.tiles)
+                        it.index = index++;
+                }
 
                 std::sort(data.groups.begin(), data.groups.end(), comparator_groups);                                                          // Sort groups
                 if (auto it = std::adjacent_find(data.groups.begin(), data.groups.end(), comparator_groups_eq); it != data.groups.end())       // Check for duplicate groups
@@ -397,6 +404,18 @@ namespace Objects
                         Program::Error(Str("Group `", group.first, "` contains non-existent tile named `", name, "`."));
                 }
 
+                // Check if default and display variant names are real
+                for (const auto &tile : data.tiles)
+                {
+                    auto it = std::lower_bound(tile.variants.begin(), tile.variants.end(), tile.va_default, comparator_variants);
+                    if (it == tile.variants.end() || it->first != tile.va_default)
+                        Program::Error(Str("Default variant name `", tile.va_default, "` for `", tile.name, "` doesn't exists."));
+
+                    it = std::lower_bound(tile.variants.begin(), tile.variants.end(), tile.va_display, comparator_variants);
+                    if (it == tile.variants.end() || it->first != tile.va_display)
+                        Program::Error(Str("Default variant name `", tile.va_display, "` for `", tile.name, "` doesn't exists."));
+                }
+
                 // Getting additional information
                 int index = 0;
                 for (const auto &it : data.tiles)
@@ -416,6 +435,10 @@ namespace Objects
 
                     index++;
                 }
+
+                // Sort tile lists for specific layers by indices stored in tiles.
+                for (auto &it : data.tiles_by_layer)
+                    std::sort(it.begin(), it.end(), [&](int a, int b){return data.tiles[a].index < data.tiles[b].index;});
             }
 
             int GetGroupIndex(std::string name) const
@@ -447,9 +470,18 @@ namespace Objects
             {
                 return data.tiles_by_layer[layer];
             }
-            const std::string GetTileName(int index) const
+            const std::string &GetTileName(int index) const
             {
                 return data.tiles[index].name;;
+            }
+
+            const std::string &GetDefaultVariantName(int tile_index) const
+            {
+                return data.tiles[tile_index].va_default;
+            }
+            const std::string &GetDisplayVariantName(int tile_index) const
+            {
+                return data.tiles[tile_index].va_display;
             }
 
             int GetVariantIndex(int tile_index, std::string variant_name) const
@@ -468,8 +500,6 @@ namespace Objects
             {
                 return tile_pos * tile_size + sheet_tex_pos;
             }
-
-            inline static constexpr const char *default_variant_name = "main";
         };
         inline static TilingSettings tiling{"assets/tiling"};
 
@@ -649,6 +679,7 @@ namespace Objects
             bool ok;
             if (forward_compat)
             {
+                data = {};
                 ok = Reflection::from_string(data, (char *)file.Data()); // `MemoryFile::Data()` is null-terminated, so we're fine.
             }
             else
@@ -690,6 +721,12 @@ namespace Objects
 
         bool selecting_tiles = 0;
         float selecting_tiles_alpha = 0;
+        bool selecting_tiles_button_selected = 0;
+        ivec2 selecting_tiles_selected_button_pos = ivec2(0);
+
+        static constexpr ivec2 selecting_tiles_buttons_per_screen = ivec2(6,16);
+        static constexpr int selecting_tiles_button_text_offset = 12;
+        static constexpr ivec2 selecting_tiles_button_sz = screen_sz / selecting_tiles_buttons_per_screen;
 
 
         class
@@ -697,13 +734,18 @@ namespace Objects
             ivec2 size;
             std::vector<Map::tile_id_t> tiles;
           public:
+            void Grab(int tile_index)
+            {
+                size = ivec2(1);
+                tiles = {Map::tiling.GetVariantSpritePos(tile_index, Map::tiling.GetVariantIndex(tile_index, Map::tiling.GetDefaultVariantName(tile_index)))};
+            }
             void Grab(const Map &map, Map::layer_mem_ptr_t layer, ivec2 a, ivec2 b)
             {
                 if (a.x > b.x) std::swap(a.x, b.x);
                 if (a.y > b.y) std::swap(a.y, b.y);
 
                 size = b - a + 1;
-                tiles.resize(size.product());
+                tiles = std::vector<Map::tile_id_t>(size.product());
 
                 for (int y = 0; y < size.y; y++)
                 for (int x = 0; x < size.x; x++)
@@ -895,17 +937,14 @@ namespace Objects
 
                 ivec2 wasd = ivec2(Keys::d.down() - Keys::a.down(), Keys::s.down() - Keys::w.down());
                 { // WASD modifiers
-                    if (!selecting_tiles)
-                    {
-                        int speed = 6;
-                        if (Keys::l_alt.down())
-                            speed = 100;
-                        if (Keys::l_ctrl.down())
-                            speed = 20;
-                        if (Keys::l_shift.down())
-                            speed = 1;
-                        wasd *= speed;
-                    }
+                    int speed = 6;
+                    if (Keys::l_alt.down())
+                        speed = 100;
+                    if (Keys::l_ctrl.down())
+                        speed = 20;
+                    if (Keys::l_shift.down())
+                        speed = 1;
+                    wasd *= speed;
                 }
 
                 { // Camera
@@ -914,10 +953,28 @@ namespace Objects
                     cam.pos = editor_cam_pos;
                 }
 
+                // Selecting tiles
+                if (selecting_tiles)
+                {
+                    selecting_tiles_button_selected = 1;
+                    selecting_tiles_selected_button_pos = div_ex(mouse.pos() + screen_sz/2, selecting_tiles_button_sz);
 
+                    int button_index = selecting_tiles_selected_button_pos.y + selecting_tiles_buttons_per_screen.y * selecting_tiles_selected_button_pos.x;
 
-                // Editing the map
-                if (!selecting_tiles) // Not `else`.
+                    if ((selecting_tiles_selected_button_pos < 0).any() || (selecting_tiles_selected_button_pos >= selecting_tiles_buttons_per_screen).any() ||
+                         button_index >= int(Map::tiling.GetTileIndicesForLayer(target_layer_enum).size()))
+                    {
+                        selecting_tiles_button_selected = 0;
+                        selecting_tiles_selected_button_pos = ivec2(-1);
+                    }
+
+                    if (mouse.left.pressed() && selecting_tiles_button_selected)
+                    {
+                        selecting_tiles = 0;
+                        grab.Grab(Map::tiling.GetTileIndicesForLayer(target_layer_enum)[button_index]);
+                    }
+                }
+                else // Editing the map
                 {
                     { // Switching modes
                         if (Keys::e.pressed())
@@ -936,7 +993,10 @@ namespace Objects
                         if (Keys::_3.pressed())
                             target_layer_enum = Map::la_back;
                         if (old_target_layer_enum != target_layer_enum)
+                        {
                             target_layer = Map::layer_list[target_layer_enum];
+                            grab.Release();
+                        }
                     }
 
                     { // Switching layer transparency
@@ -1068,7 +1128,7 @@ namespace Objects
                 { // Map border
                     constexpr int width = 4;
                     for (int i = 0; i <= 1; i++)
-                        Draw::Rect(-cam.pos, ivec2(width * -i), map.Size() * tile_size + width, width, fvec3(i), 0.5);
+                        Draw::Rect(ivec2(width * -i) - cam.pos, map.Size() * tile_size + width, width, fvec3(i), 0.5);
                 }
 
 
@@ -1083,10 +1143,10 @@ namespace Objects
                     if (a.x > b.x) std::swap(a.x, b.x);
                     if (a.y > b.y) std::swap(a.y, b.y);
 
-                    Draw::Rect(-cam.pos, a * tile_size, (b - a + 1) * tile_size, width*3, fvec3(1));
+                    Draw::Rect(a * tile_size - cam.pos, (b - a + 1) * tile_size, width*3, fvec3(1));
 
                     for (int i = 0; i <= 1; i++)
-                        Draw::Rect(-cam.pos - ivec2(i * width), a * tile_size, (b - a + 1) * tile_size + width, width, i ? mode_color : fvec3(0));
+                        Draw::Rect(a * tile_size - cam.pos - ivec2(i * width), (b - a + 1) * tile_size + width, width, i ? mode_color : fvec3(0));
                 }
 
                 // Mouse cursor
@@ -1094,7 +1154,7 @@ namespace Objects
                 {
                     constexpr int cursor_width = 4, cursor_length = 4, cursor_corner_size = 4, cursor_outline_size = 2;
 
-                    Draw::Rect(mouse_pos * tile_size - cam.pos, ivec2(0), ivec2(tile_size), cursor_outline_size, fvec3(1));
+                    Draw::Rect(mouse_pos * tile_size - cam.pos, ivec2(tile_size), cursor_outline_size, fvec3(1));
 
                     int i = 0;
                     for (const auto &m : {fmat2(1,0,0,1),fmat2(0,-1,1,0),fmat2(-1,0,0,-1),fmat2(0,1,-1,0)})
@@ -1109,9 +1169,7 @@ namespace Objects
                 // Tile selector
                 if (selecting_tiles_alpha)
                 {
-                    constexpr ivec2 tile_buttons_per_screen = ivec2(6,16);
-                    constexpr int text_offset = 12;
-                    constexpr ivec2 tile_button_sz = screen_sz / tile_buttons_per_screen;
+                    constexpr int rect_margin = 2, rect_line_width = 1;
 
                     // Dark background
                     r.Quad(-screen_sz/2, screen_sz).color(fvec3(0)).alpha(0.5 * selecting_tiles_alpha);
@@ -1120,17 +1178,29 @@ namespace Objects
                     int count = available_tiles.size();
 
                     // Buttons
-                    int index = 0;
-                    for (int x = 0; x < tile_buttons_per_screen.x && index < count; x++)
-                    for (int y = 0; y < tile_buttons_per_screen.y && index < count; y++)
+                    int button_index = 0;
+                    for (int x = 0; x < selecting_tiles_buttons_per_screen.x && button_index < count; x++)
+                    for (int y = 0; y < selecting_tiles_buttons_per_screen.y && button_index < count; y++)
                     {
-                        ivec2 base = tile_button_sz * ivec2(x,y) - screen_sz/2;
-                        ivec2 main_sprite_pos = Map::tiling.SpritePosToTextureCoords(Map::tiling.GetVariantSpritePos(index, Map::tiling.GetVariantIndex(index, Map::tiling.default_variant_name)));
+                        int index = available_tiles[button_index];
 
-                        r.Quad(base + tile_button_sz.y/2, ivec2(tile_size)).tex(main_sprite_pos).alpha(selecting_tiles_alpha).center();
-                        r.Text(base + tile_button_sz.y/2 + ivec2(text_offset,0), Map::tiling.GetTileName(index)).preset(Draw::WithBlackOutline).align_h(-1).alpha(selecting_tiles_alpha);
+                        ivec2 base = selecting_tiles_button_sz * ivec2(x,y) - screen_sz/2;
+                        ivec2 main_sprite_pos = Map::tiling.SpritePosToTextureCoords(Map::tiling.GetVariantSpritePos(index, Map::tiling.GetVariantIndex(index, Map::tiling.GetDisplayVariantName(index))));
 
-                        index++;
+                        // Selection
+                        if (selecting_tiles_button_selected && ivec2(x,y) == selecting_tiles_selected_button_pos)
+                        {
+                            Draw::Rect(base + ivec2(rect_margin-1), selecting_tiles_button_sz - ivec2(2*(rect_margin-1)), rect_line_width, fvec3(0   ), selecting_tiles_alpha);
+                            Draw::Rect(base + ivec2(rect_margin  ), selecting_tiles_button_sz - ivec2(2* rect_margin   ), rect_line_width, fvec3(0.75), selecting_tiles_alpha);
+                        }
+
+                        // Block icon
+                        r.Quad(base + selecting_tiles_button_sz.y/2, ivec2(tile_size)).tex(main_sprite_pos).alpha(selecting_tiles_alpha).center();
+
+                        // Text
+                        r.Text(base + selecting_tiles_button_sz.y/2 + ivec2(selecting_tiles_button_text_offset,0), Map::tiling.GetTileName(index)).preset(Draw::WithBlackOutline).align_h(-1).alpha(selecting_tiles_alpha).font(font_tiny);
+
+                        button_index++;
                     }
                 }
 

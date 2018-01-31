@@ -8,9 +8,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
-#include <map>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -198,11 +198,18 @@ namespace Reflection
             return ret;
         }
 
-        inline const char *skip_whitespace(const char *ptr)
+        // Increments `ptr` until a first non-whitespace char (or end of string) is reached.
+        inline void skip_ws(const char *&ptr)
         {
-            while (*ptr && *ptr <= ' ')
+            while (*ptr && (unsigned char)*ptr <= ' ')
                 ptr++;
-            return ptr;
+        }
+        // Checks if `*ptr` is in the list, then increments `ptr` (if `*ptr != '\0'`).
+        inline bool skip_one_of(const char *&ptr, const char *list)
+        {
+            if (!*ptr)
+                return 0;
+            return std::strchr(list, *ptr++);
         }
     }
 
@@ -230,9 +237,13 @@ namespace Reflection
     {
         // Utils
 
-        template <typename F, std::size_t ...Seq> static void for_each(std::index_sequence<Seq...>, F &&f)
+        template <typename F, std::size_t ...Seq> inline void for_each(std::index_sequence<Seq...>, F &&f)
         {
             (f(std::integral_constant<std::size_t, Seq>{}) , ...);
+        }
+        template <typename F, std::size_t ...Seq> inline bool for_each_while(std::index_sequence<Seq...>, F &&f)
+        {
+            return (bool(f(std::integral_constant<std::size_t, Seq>{})) && ...);
         }
 
         template <typename T, typename = void> struct supports_reset_by_empty_list_assignment_impl : std::false_type {};
@@ -289,7 +300,7 @@ namespace Reflection
         template <std::size_t N> using num_to_str = decltype(num_to_str_impl<N, 1>(std::make_index_sequence<1>{}));
 
         // Returns 1 only when the string consists of non-printable characters only.
-        template <std::size_t N> static constexpr bool string_is_empty(const char (&str)[N])
+        template <std::size_t N> inline constexpr bool string_is_empty(const char (&str)[N])
         {
             for (std::size_t i = 0; i < N; i++)
                 if (str[i] > ' ')
@@ -359,8 +370,8 @@ namespace Reflection
         // This should return an iterator to the next valid element.
         inline void/*iterator*/ reflection_interface_container_erase(void *, sink/*const const_iterator? &begin_iterator*/, sink/*const const_iterator? &end_iterator*/) noexcept;
 
-        template <typename T> std::enable_if_t<std::is_enum_v<T>, const std::map<std::string, T> &> reflection_interface_enum_string_value_map(const T *) {static std::map<std::string, T> ret; return ret;} // No noexcept here.
-        template <typename T> std::enable_if_t<std::is_enum_v<T>, const std::map<T, std::string> &> reflection_interface_enum_value_string_map(const T *) {static std::map<T, std::string> ret; return ret;} // No noexcept here.
+        template <typename T> std::enable_if_t<std::is_enum_v<T>, const std::unordered_map<std::string, T> &> reflection_interface_enum_string_value_map(const T *) {static std::unordered_map<std::string, T> ret; return ret;} // No noexcept here.
+        template <typename T> std::enable_if_t<std::is_enum_v<T>, const std::unordered_map<T, std::string> &> reflection_interface_enum_value_string_map(const T *) {static std::unordered_map<T, std::string> ret; return ret;} // No noexcept here.
 
 
         // Interface function specializations
@@ -763,7 +774,6 @@ namespace Reflection
 
     using InterfaceDetails::Interface;
 
-
     template <typename T> std::string to_string(const T &object)
     {
         if constexpr (Interface::is_structure<T>())
@@ -812,7 +822,6 @@ namespace Reflection
             return Interface::to_string(object);
         }
     }
-
 
     template <typename T> std::string to_string_tree(const T &object, int depth = -1) // `depth == -1` means no limit.
     {
@@ -928,599 +937,351 @@ namespace Reflection
     }
 
 
-    // Generic runtime reflection
-    namespace GenericRefl
+    enum FromStringMode {complete, maybe_incomplete};
+
+    namespace from_string_impl
     {
-        inline namespace Enums
+        enum class Error
         {
-            enum FromStringMode {overwrite, edit};
+            no_error,
+            incomplete,
+            bad_primitive,
+            missing_start_of_tuple_structure,
+            missing_start_of_structure,
+            missing_start_of_container,
+            missing_comma,
+            missing_equality,
+            invalid_field_name,
+            duplicate_fields,
+            missing_end_of_tuple_structure,
+        };
+
+        template <typename T> const char *from_string(T &object, const char *str, bool verbose_errors, Error &error, std::string &error_details, std::vector<const char *> &stack);
+
+        template <typename T, std::size_t I> constexpr decltype(from_string<T>) *from_string_bound_to_field()
+        {
+            return [](T &object, const char *str, bool verbose_errors, Error &error, std::string &error_details, std::vector<const char *> &stack) -> const char *
+            {
+                return from_string(Interface::field<I>(object), str, verbose_errors, error, error_details, stack);
+            };
         }
 
-        struct ParsingErrorContext
+        template <typename T, std::size_t ...I> decltype(from_string<T>) *const (&from_string_func_ptr_array(std::index_sequence<I...>))[sizeof...(I)]
         {
-            std::vector<std::string> stack;
-            std::string message;
-
-            std::string to_string() const
-            {
-                std::string ret;
-                if (stack.size() != 0)
-                {
-                    ret = "At ";
-                    for (auto it = stack.begin(); it != stack.end(); it++)
-                    {
-                        if (it != stack.begin())
-                            ret += '.';
-                        ret += *it;
-                    }
-                    ret += ": ";
-                }
-                ret += message;
-                return ret;
-            }
-
-            void error_expected_char(char exp, char got)
-            {
-                message = "Expected `" + Strings::char_escape_seq(exp) + "` but got `" + Strings::char_escape_seq(got) + "`.";
-            }
-            void error_expected_str(std::string exp)
-            {
-                message = "Expected " + exp + ".";
-            }
-        };
-        class ParsingErrorContextRef
+            static decltype(from_string<T>) *const array[] {from_string_bound_to_field<T, I>()...};
+            return array;
+        }
+        template <typename T> const char *from_string_field(std::size_t index, T &object, const char *str, bool verbose_errors, Error &error, std::string &error_details, std::vector<const char *> &stack)
         {
-            ParsingErrorContext *ptr;
-          public:
-            ParsingErrorContextRef(std::nullptr_t) : ptr(0) {}
-            ParsingErrorContextRef(ParsingErrorContext &con) : ptr(&con) {}
+            return from_string_func_ptr_array<T>(std::make_index_sequence<Interface::field_count<T>()>{})[index](object, str, verbose_errors, error, error_details, stack);
+        }
 
-            explicit operator bool() const
-            {
-                return ptr != 0;
-            }
-
-            void push(const std::string &str)
-            {
-                if (!ptr) return;
-                ptr->stack.push_back(str);
-            }
-            void pop()
-            {
-                if (!ptr) return;
-                ptr->stack.pop_back();
-            }
-            void error(const std::string &str)
-            {
-                if (!ptr) return;
-                ptr->message = str + '.';
-            }
-            void error_append(const std::string &str)
-            {
-                if (!ptr) return;
-                ptr->message += str;
-            }
-            void error_primitive()
-            {
-                if (!ptr) return;
-                ptr->message = "Primitive data type parsing failed.";
-            }
-            void error_immutable()
-            {
-                if (!ptr) return;
-                ptr->message = "The object is immutable.";
-            }
-            void error_not_a_container()
-            {
-                if (!ptr) return;
-                ptr->message = "The object is not a container.";
-            }
-            void error_bad_field_name(const std::string &str)
-            {
-                if (!ptr) return;
-                ptr->message = "Invalid field name `" + str + "`.";
-            }
-            void error_duplicate_field(const std::string &str)
-            {
-                if (!ptr) return;
-                ptr->message = "Duplicate field `" + str + "`.";
-            }
-            void error_missing_initializers()
-            {
-                if (!ptr) return;
-                ptr->message = "Missing initializers for following fields: " + ptr->message + ".";
-            }
-            void error_expected(const std::string &str)
-            {
-                if (!ptr) return;
-                ptr->message = "Expected " + str + '.';
-            }
-            void error_expected_end()
-            {
-                if (!ptr) return;
-                ptr->message = "Expected end of data.";
-            }
-            void error_unexpected(const std::string &str)
-            {
-                if (!ptr) return;
-                ptr->message = "Unexpected " + str + '.';
-            }
-            void error_unexpected_char(char exp, char got)
-            {
-                if (!ptr) return;
-                ptr->message = "Expected `" + Strings::char_escape_seq(exp) + "` but got `" + Strings::char_escape_seq(got) + "`.";
-            }
-            void error_unexpected_char(std::string exp, char got)
-            {
-                if (!ptr) return;
-                ptr->message = "Expected " + exp + " but got `" + Strings::char_escape_seq(got) + "`.";
-            }
-        };
-
-        class Generic;
-        class Element;
-
-        struct GenericTable
+        template <typename T, std::size_t ...I> const auto &field_name_to_index_map(std::index_sequence<I...>)
         {
-            bool is_structure,
-                 is_container,
-                 is_primitive;
-
-            bool anonymous_fields;
-
-            std::size_t (*element_count   )(const Generic *);
-            Element     (*element_by_index)(const Generic *, std::size_t);
-            Element     (*element         )(const Generic *, std::string);
-
-            void        (*reset           )(const Generic *);
-
-            std::size_t (*insert          )(const Generic *, std::size_t pos, bool back, const char *str, ParsingErrorContextRef); // For containers only. `pos` is clamped to the [0;element_count()].
-
-            std::string (*to_string       )(const Generic *);
-            std::string (*to_string_tree  )(const Generic *);
-            std::size_t (*from_string     )(const Generic *, const char *, FromStringMode, ParsingErrorContextRef);
-        };
-
-        template <typename T> const GenericTable &generic_table();
-
-        class Generic
-        {
-            const void *ptr;
-            bool constant;
-            const GenericTable *table;
-          public:
-            constexpr Generic(const void *ptr, bool constant, const GenericTable *table) : ptr(ptr), constant(constant), table(table) {}
-            constexpr Generic() : Generic(0, 1, 0) {}
-            template <typename T> Generic(T &object) : Generic(&object, std::is_const_v<T>, &generic_table<T>()) {}
-
-            const void *pointer() const {return ptr;}
-            bool is_const() const {return constant;}
-
-            bool           is_structure    ()                  const {return table->is_structure;}
-            bool           is_container    ()                  const {return table->is_container;}
-            bool           is_primitive    ()                  const {return table->is_primitive;}
-
-            bool           anonymous_fields()                  const {return table->anonymous_fields;}
-
-            std::size_t    element_count   ()                  const {return table->element_count (this);}
-            inline Element element_by_index(std::size_t index) const;
-            inline Element element         (std::string name)  const;
-
-            // Swaps the object with a fresh default-constructed copy.
-            void           reset           ()                  const {       table->reset         (this);}
-
-            // For containers only. `pos` is clamped to the [0;element_count()].
-            std::size_t    insert          (std::size_t pos, bool back, const char *str, ParsingErrorContextRef con = 0) const {return table->insert(this, pos, back, str, con);}
-
-            std::string    to_string       ()                  const {return table->to_string     (this);}
-            std::string    to_string_tree  ()                  const {return table->to_string_tree(this);}
-            std::size_t    from_string     (const char *str, FromStringMode edit = overwrite, ParsingErrorContextRef con = 0) const {if (edit == overwrite) {reset();} return table->from_string(this, str, edit, con);}
-        };
-
-        class Element : public Generic
-        {
-            std::string field_name;
-            bool field_has_default_value;
-          public:
-            Element(const void *ptr, bool constant, const GenericTable *table, const std::string &field_name, bool field_has_default_value)
-                : Generic(ptr, constant, table), field_name(field_name), field_has_default_value(field_has_default_value) {}
-            Element() : Element(0, 1, 0, "<invalid>", 0) {}
-
-            template <typename T> Element(T &object, const std::string &field_name, bool field_has_default_value)
-              : Generic(object),
-                field_name(field_name),
-                field_has_default_value(field_has_default_value)
-            {}
-            template <typename T, std::size_t I> Element(T &object, index_const<I>)
-              : Generic(Interface::field<I>(object)),
-                field_name(Interface::field_name<T, I>()),
-                field_has_default_value(Interface::field_has_default_value<T, I>())
-            {}
-            template <typename T> Element(T &object, std::size_t index)
-            {
-                bool found = 0;
-                Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, [&](auto i)
-                {
-                    if (index-- == 0)
-                    {
-                        found = 1;
-                        *this = Element(object, i);
-                    }
-                });
-                if (!found)
-                    *this = {};
-            }
-
-            const std::string &name             () const {return field_name;}
-            bool               has_default_value() const {return field_has_default_value;}
-        };
-
-        inline Element Generic::element_by_index(std::size_t index) const {return table->element_by_index(this, index);}
-        inline Element Generic::element         (std::string name ) const {return table->element         (this, name );}
-
-        template <typename T, typename = std::make_index_sequence<Interface::field_count<T>()>> struct field_name_to_index_impl{};
-        template <typename T, std::size_t ...Seq> struct field_name_to_index_impl<T, std::index_sequence<Seq...>>
-        {
-            static std::size_t func(const std::string &name)
-            {
-                if (Strings::is_digit(name[0]))
-                {
-                    std::size_t index, len = Interface::primitive_from_string(index, name.c_str());
-                    if (len == 0 || name[len] != '\0' || index < 0 || index >= Interface::field_count<T>())
-                        return -1;
-                    else
-                        return index;
-                }
-                else
-                {
-                    if constexpr (Interface::structure_is_tuple<T>())
-                        return -1;
-
-                    static std::map<std::string, std::size_t> map{ {Interface::field_name<T, Seq>(), Seq}... };
-                    auto it = map.find(name);
-                    if (it == map.end())
-                        return -1;
-                    else
-                        return it->second;
-                }
-            }
-        };
+            static const std::unordered_map<std::string, std::size_t> map{{Interface::field_name<T,I>(), I}...};
+            return map;
+        }
         template <typename T> std::size_t field_name_to_index(const std::string &name)
         {
-            return field_name_to_index_impl<T>::func(name);
+            const auto &map = field_name_to_index_map<T>(std::make_index_sequence<Interface::field_count<T>()>{});
+            auto it = map.find(name);
+            if (it != map.end())
+                return it->second;
+            else
+                return std::size_t(-1);
         }
 
-        enum class FieldStatus
+        template <typename T, std::size_t ...I> const char *const (&field_index_to_name_array(std::index_sequence<I...>))[sizeof...(I)]
         {
-            not_assigned = 0,
-            default_value,
-            assigned,
-        };
+            static constexpr const char *const array[]{Interface::field_name<T,I>()...};
+            return array;
+        }
+        template <typename T> constexpr const char *field_index_to_name(std::size_t index)
+        {
+            return field_index_to_name_array<T>(std::make_index_sequence<Interface::field_count<T>()>{})[index];
+        }
 
-        template <typename T> const GenericTable &generic_table()
+        // `stack` records field names. For container elements, it will have a null followed by (index + 1).
+        template <typename T> const char *from_string(T &object, const char *str, bool verbose_errors, Error &error, std::string &error_details, std::vector<const char *> &stack)
         {
-            static const GenericTable ret
+            (void)verbose_errors;
+
+            if (!str)
+                return 0;
+
+            Strings::skip_ws(str);
+
+            if constexpr (Interface::is_structure<T>())
             {
-                Interface::is_structure<T>(),
-                Interface::is_container<T>(),
-                Interface::is_primitive<T>(),
-                Interface::structure_is_tuple<T>(),
-
-                [](const Generic *ptr) -> std::size_t // element_count
+                if constexpr (Interface::structure_is_tuple<T>())
                 {
-                         if constexpr (Interface::is_structure<T>()) return Interface::field_count<T>();
-                    else if constexpr (Interface::is_container<T>()) return Interface::container_size(*(const T *)ptr->pointer());
-                    else                                             return 0;
-                },
-                [](const Generic *ptr, std::size_t index) -> Element // element_by_index
-                {
-                    return {*(const T *)ptr->pointer(), index};
-                },
-                [](const Generic *ptr, std::string name) -> Element // element
-                {
-                    return {*(const T *)ptr->pointer(), field_name_to_index<const T>(name)};
-                },
-                [](const Generic *ptr) -> void // reset
-                {
-                    if constexpr (std::is_const_v<T>)
+                    if (!Strings::skip_one_of(str, "("))
                     {
-                        (void)ptr;
-                    }
-                    else
-                    {
-                        if constexpr (Interface::is_structure<T>())
-                        {
-                            Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, [ptr](auto index)
-                            {
-                                Generic(Interface::field<index.value>(*(T *)ptr->pointer())).reset();
-                            });
-                        }
-                        else if constexpr (Cexpr::supports_reset_by_empty_list_assignment<T>)
-                        {
-                            *(T *)ptr->pointer() = {};
-                        }
-                        else if constexpr (Cexpr::supports_reset_by_swap<T>)
-                        {
-                            T tmp{};
-                            std::swap(*(T *)ptr->pointer(), tmp);
-                        }
-                        else
-                        {
-                            (void)ptr;
-                        }
-                    }
-                },
-                [](const Generic *ptr, std::size_t pos, bool back, const char *str, ParsingErrorContextRef con) -> std::size_t // insert
-                {
-                    if constexpr (std::is_const_v<T> || !Interface::is_container<T>())
-                    {
-                        (void)ptr;
-                        (void)pos;
-                        (void)back;
-                        (void)str;
-                        if constexpr (std::is_const_v<T>)
-                            con.error_immutable();
-                        else
-                            con.error_not_a_container();
+                        error = Error::missing_start_of_tuple_structure;
                         return 0;
                     }
-                    else
-                    {
-                        std::size_t element_c = ptr->element_count();
-                        if (pos > element_c+1)
-                            pos = element_c+1;
-                        Interface::container_const_iterator_t<T> iter = (back ? Interface::container_cend(*(const T *)ptr->pointer())
-                                                                              : Interface::container_cbegin(*(const T *)ptr->pointer()));
-                        std::advance(iter, back ? -pos : pos);
 
-                        Interface::container_value_t<T> element{};
-                        std::size_t len = Generic(element).from_string(str, overwrite, con);
-                        if (len == 0)
+                    bool ok = Cexpr::for_each_while(std::make_index_sequence<Interface::field_count<T>()>{}, [&](auto index) -> bool
+                    {
+                        if constexpr (index.value != 0)
+                        {
+                            Strings::skip_ws(str);
+                            if (!Strings::skip_one_of(str, ","))
+                            {
+                                error = Error::missing_comma;
+                                return 0;
+                            }
+                        }
+
+                        if (verbose_errors) stack.push_back(Interface::field_name<T, index.value>()); // Push field name.
+
+                        str = from_string(Interface::field<index.value>(object), str, verbose_errors, error, error_details, stack);
+                        if (!str) // If `from_string()` failed.
+                            return 0; // `error` was already set by `from_string()`.
+
+                        if (verbose_errors) stack.pop_back(); // Pop field name.
+
+                        return 1;
+                    });
+
+                    if (!ok)
+                        return 0; // Forward error from the lambda.
+
+                    Strings::skip_ws(str);
+                    if (!Strings::skip_one_of(str, "),"))
+                    {
+                        error = Error::missing_end_of_tuple_structure;
+                        return 0;
+                    }
+                    if (str[-1] == ',')
+                    {
+                        Strings::skip_ws(str);
+                        if (!Strings::skip_one_of(str, ")"))
+                        {
+                            error = Error::missing_end_of_tuple_structure;
                             return 0;
-                        Interface::container_insert_move(*(T *)ptr->pointer(), iter, (Interface::container_value_t<T> &&)element);
-                        return len;
+                        }
                     }
-                },
-                [](const Generic *ptr) -> std::string // to_string
+                }
+                else // Structure, but not a tuple.
                 {
-                    return to_string(*(const T *)ptr->pointer());
-                },
-                [](const Generic *ptr) -> std::string // to_string_tree
-                {
-                    return to_string_tree(*(const T *)ptr->pointer());
-                },
-                [](const Generic *ptr, const char *str, FromStringMode edit, ParsingErrorContextRef con) -> std::size_t // from_string
-                {
-                    if constexpr (std::is_const_v<T>)
+                    if (!Strings::skip_one_of(str, "{"))
                     {
-                        (void)ptr;
-                        (void)str;
-                        (void)edit;
-                        con.error_immutable();
+                        error = Error::missing_start_of_structure;
                         return 0;
                     }
-                    else
+
+                    bool assigned_fields[Interface::field_count<T>()] {};
+                    bool first = 1;
+
+                    while (1)
                     {
-                        const char *begin = str;
-                        str = Strings::skip_whitespace(str);
-
-                        if constexpr (Interface::is_structure<T>())
+                        if (first)
                         {
-                            if constexpr (Interface::structure_is_tuple<T>())
-                            {
-                                if (*(str++) != '(')
-                                {
-                                    con.error_unexpected_char('(', str[-1]);
-                                    return 0;
-                                }
-                                bool error = 0;
-                                Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, [&](auto index)
-                                {
-                                    if (error)
-                                        return;
-
-                                    if (index.value != 0)
-                                    {
-                                        if (*(str++) != ',')
-                                        {
-                                            error = 1;
-                                            con.error_unexpected_char(',', str[-1]);
-                                            return;
-                                        }
-                                    }
-                                    con.push(Interface::field_name<T, index.value>());
-                                    std::size_t len = Generic(Interface::field<index.value>(*(T *)ptr->pointer())).from_string(str, edit, con);
-                                    if (len == 0)
-                                    {
-                                        error = 1;
-                                        return; // The error message here comes from the nested `from_string()` call.
-                                    }
-                                    con.pop();
-                                    str += len;
-                                    str = Strings::skip_whitespace(str);
-                                });
-                                if (error)
-                                    return 0; // The error message here comes from the nested `from_string()` call.
-                                if (*(str++) != ')')
-                                {
-                                    con.error_unexpected_char(')', str[-1]);
-                                    return 0;
-                                }
-                            }
-                            else
-                            {
-                                if (*(str++) != '{')
-                                {
-                                    con.error_unexpected_char('{', str[-1]);
-                                    return 0;
-                                }
-                                FieldStatus field_status[Interface::field_count<T>()]{};
-                                Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, [&](auto index)
-                                {
-                                    if (Interface::field_has_default_value<T, index.value>())
-                                        field_status[index.value] = FieldStatus::default_value;
-                                });
-
-                                str = Strings::skip_whitespace(str);
-
-                                bool first = 1;
-
-                                while (*str != '}')
-                                {
-                                    if (!first)
-                                    {
-                                        if (*(str++) != ',')
-                                        {
-                                            con.error_unexpected_char("`,` or `}`", str[-1]);
-                                            return 0;
-                                        }
-                                        str = Strings::skip_whitespace(str);
-                                    }
-                                    else
-                                        first = 0;
-
-                                    std::string field_name;
-                                    while (Strings::is_alphanum(*str))
-                                        field_name += *(str++);
-                                    if (field_name.empty())
-                                    {
-                                        con.error_expected("field name");
-                                        return 0;
-                                    }
-
-                                    std::size_t field_index = field_name_to_index<T>(field_name);
-                                    if (field_index == std::size_t(-1))
-                                    {
-                                        con.error_bad_field_name(field_name);
-                                        return 0;
-                                    }
-
-                                    str = Strings::skip_whitespace(str);
-                                    if (*(str++) != '=')
-                                    {
-                                        con.error_unexpected_char('=', str[-1]);
-                                        return 0;
-                                    }
-
-                                    if (field_status[field_index] == FieldStatus::assigned)
-                                    {
-                                        con.error_duplicate_field(field_name);
-                                        return 0;
-                                    }
-                                    field_status[field_index] = FieldStatus::assigned;
-
-                                    Element field = {*(T *)ptr->pointer(), field_index};
-
-                                    con.push(field_name);
-                                    std::size_t len = field.from_string(str, edit, con);
-                                    if (len == 0)
-                                        return 0; // The error message here comes from the nested `from_string()` call.
-                                    con.pop();
-
-                                    str += len;
-                                    str = Strings::skip_whitespace(str);
-                                }
-
-                                bool uninitialized_fields = 0;
-                                Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, [&](auto index)
-                                {
-                                    if (field_status[index.value] == FieldStatus::not_assigned)
-                                    {
-                                        if (uninitialized_fields)
-                                            con.error_append(", ");
-                                        con.error_append(std::string("`") + Interface::field_name<T, index.value>() + '`');
-                                        uninitialized_fields = 1;
-                                    }
-                                });
-                                if (uninitialized_fields && edit == overwrite)
-                                {
-                                    con.error_missing_initializers();
-                                    return 0;
-                                }
-
-                                str++; // Skip the '}'.
-                            }
+                            first = 0;
                         }
-                        else if constexpr (Interface::is_container<T>())
+                        else
                         {
-                            (void)edit;
-
-                            if (*(str++) != '[')
+                            Strings::skip_ws(str);
+                            if (!Strings::skip_one_of(str, ","))
                             {
-                                con.error_unexpected_char('[', str[-1]);
+                                if (str[-1] == '}')
+                                    break;
+
+                                error = Error::missing_comma;
                                 return 0;
                             }
-
-                            bool first = 1;
-                            int index = 0;
-
-                            while (*str != ']')
-                            {
-                                if (!first)
-                                {
-                                    if (*(str++) != ',')
-                                    {
-                                        con.error_unexpected_char("`,` or `]`", str[-1]);
-                                        return 0;
-                                    }
-                                }
-                                else
-                                    first = 0;
-
-                                if (con) con.push(Reflection::to_string(index++));
-                                std::size_t len = ptr->insert(0, 1, str, con);
-                                if (len == 0)
-                                    return 0; // The error message here comes from the nested `from_string()` call.
-                                con.pop();
-
-                                str += len;
-                                str = Strings::skip_whitespace(str);
-                            }
-
-                            str++; // Skip the ']'.
                         }
-                        else // Interface::is_primitive<T>()
+
+                        Strings::skip_ws(str);
+
+                        if (*str == '}')
                         {
-                            static_assert(Interface::primitive_has_from_string<T>(), "This type doesn't support conversion from a string.");
-
-                            (void)edit;
-
-                            std::size_t len = Interface::primitive_from_string(*(T *)ptr->pointer(), str);
-                            if (len == 0)
-                            {
-                                con.error_primitive();
-                                return 0;
-                            }
-                            str += len;
+                            str++;
+                            break;
                         }
 
-                        return str - begin;
+                        std::string field_name;
+
+                        while (Strings::is_alphanum(*str))
+                            field_name += *str++;
+
+                        std::size_t field_index = field_name_to_index<T>(field_name);
+                        if (field_index == std::size_t(-1))
+                        {
+                            error = Error::invalid_field_name;
+                            if (verbose_errors)
+                                error_details = (field_name.empty() ? " " : field_name);
+                            return 0;
+                        }
+
+                        if (assigned_fields[field_index])
+                        {
+                            error = Error::duplicate_fields;
+                            if (verbose_errors)
+                                error_details = (field_name.empty() ? " " : field_name);
+                            return 0;
+                        }
+
+                        if (verbose_errors) stack.push_back(field_index_to_name<T>(field_index)); // Push field name.
+
+                        Strings::skip_ws(str);
+                        if (!Strings::skip_one_of(str, "="))
+                        {
+                            error = Error::missing_equality;
+                            return 0;
+                        }
+
+                        str = from_string_field(field_index, object, str, verbose_errors, error, error_details, stack);
+                        if (!str) // If `from_string()` failed.
+                            return 0; // `error` was already set by `from_string()`.
+
+                        if (verbose_errors) stack.pop_back(); // Pop field name.
                     }
-                },
-            };
 
-            return ret;
+                    bool ok = Cexpr::for_each_while(std::make_index_sequence<Interface::field_count<T>()>{}, [&](auto index)
+                    {
+                        bool was_assigned = assigned_fields[index.value] || Interface::field_has_default_value<T,index.value>();
+                        if (!was_assigned && verbose_errors)
+                        {
+                            if (error_details.size() > 0)
+                                error_details += "`, `";
+                            error_details += Interface::field_name<T, index.value>();
+                        }
+                        return was_assigned;
+                    });
+                    if (!ok)
+                        error = Error::incomplete; // We don't stop on this error, the primary `from_string()` handles it.
+                }
+            }
+            else if constexpr (Interface::is_container<T>())
+            {
+                if (!Strings::skip_one_of(str, "["))
+                {
+                    error = Error::missing_start_of_container;
+                    return 0;
+                }
+
+                if (verbose_errors) stack.push_back(0); // This means that the next stack entry is an index rather than a field name.
+
+                Interface::container_erase(object, Interface::container_cbegin(object), Interface::container_cend(object)); // Clear the container.
+
+                std::size_t index = 0;
+
+                while (1)
+                {
+                    if (index != 0)
+                    {
+                        Strings::skip_ws(str);
+                        if (!Strings::skip_one_of(str, ","))
+                        {
+                            if (str[-1] == ']')
+                                break;
+
+                            error = Error::missing_comma;
+                            return 0;
+                        }
+                    }
+
+                    Strings::skip_ws(str);
+
+                    if (*str == ']')
+                    {
+                        str++;
+                        break;
+                    }
+
+                    Interface::container_value_t<T> tmp;
+
+                    if (verbose_errors) stack.push_back((const char *)index); // Push field name.
+
+                    str = from_string(tmp, str, verbose_errors, error, error_details, stack);
+                    if (!str) // If `from_string()` failed.
+                        return 0; // `error` was already set by `from_string()`.
+
+                    Interface::container_insert_move(object, Interface::container_cend(object), std::move(tmp));
+
+                    if (verbose_errors) stack.pop_back(); // Pop field name.
+
+                    index++;
+                }
+
+                if (verbose_errors) stack.pop_back(); // Remove the 0.
+            }
+            else // a primitive type
+            {
+                std::size_t len = Reflection::Interface::primitive_from_string(object, str);
+                if (len == 0)
+                {
+                    error = Error::bad_primitive;
+                    return 0;
+                }
+                str += len;
+            }
+
+            return str;
         }
     }
 
-    using GenericRefl::Generic;
-    using GenericRefl::Element;
-    using GenericRefl::ParsingErrorContext;
-    using namespace GenericRefl::Enums;
-
-    template <typename T> bool from_string(T &ref, const char *str, FromStringMode edit = overwrite, GenericRefl::ParsingErrorContextRef con = 0) // If `edit == edit`, then there will be no errors on missing field initializers.
+    // Returns a pointer to the next character in the string.
+    template <FromStringMode mode = complete, typename T> const char *from_string(T &object, const char *str, std::string *error_message = 0)
     {
-        std::size_t len = Generic(ref).from_string(str, edit, con);
-        if (len == 0)
-            return 0;
-        if (*Strings::skip_whitespace(str + len) != '\0')
+        using Error = from_string_impl::Error;
+        Error error = Error::no_error;
+        std::string error_details;
+        std::vector<const char *> stack;
+
+        bool verbose_errors = (error_message != 0);
+
+        str = from_string_impl::from_string(object, str, verbose_errors, error, error_details, stack);
+
+        if (!str && verbose_errors && (mode == maybe_incomplete || error != Error::incomplete))
         {
-            con.error_expected_end();
+            if (stack.size() > 0)
+            {
+                *error_message += "At `";
+                for (std::size_t i = 0; i < stack.size(); i++)
+                {
+                    if (i != 0)
+                        *error_message += '.';
+
+                    if (stack[i] != 0)
+                        *error_message += stack[i];
+                    else
+                        *error_message += to_string((std::size_t)stack[++i]); // Sic!
+                }
+                *error_message += "`: ";
+            }
+
+            switch (error)
+            {
+                case Error::no_error                        : *error_message += "No error"; break;
+                case Error::incomplete                      : *error_message += "Missing fields"; break;
+                case Error::bad_primitive                   : *error_message += "Primitive data type parsing failed"; break;
+                case Error::missing_start_of_tuple_structure: *error_message += "Expected `(`"; break;
+                case Error::missing_start_of_structure      : *error_message += "Expected `{`"; break;
+                case Error::missing_start_of_container      : *error_message += "Expected `[`"; break;
+                case Error::missing_comma                   : *error_message += "Expected `,`"; break;
+                case Error::missing_equality                : *error_message += "Expected `=`"; break;
+                case Error::invalid_field_name              : *error_message += "Invalid field name"; break;
+                case Error::duplicate_fields                : *error_message += "Duplicate field"; break;
+                case Error::missing_end_of_tuple_structure  : *error_message += "Expected `)`"; break;
+            }
+
+            if (error_details.size() > 0)
+            {
+                *error_message += ": `";
+                *error_message += error_details;
+                *error_message += '`';
+            }
+            *error_message += '.';
+
             return 0;
         }
-        return 1;
-    }
 
+        Strings::skip_ws(str);
+        return str;
+    }
 
     template <typename T> std::size_t byte_buffer_size(const T &object)
     {
@@ -1594,12 +1355,13 @@ namespace Reflection
 
         if constexpr (Interface::is_structure<T>())
         {
-            auto lambda = [&](auto index)
+            auto lambda = [&](auto index) -> bool
             {
                 buf = from_bytes(Interface::field<index.value>(object), buf, buf_end);
+                return buf;
             };
 
-            Cexpr::for_each(std::make_index_sequence<Interface::field_count<T>()>{}, lambda);
+            Cexpr::for_each_while(std::make_index_sequence<Interface::field_count<T>()>{}, lambda);
 
             return buf;
         }
@@ -1733,9 +1495,9 @@ namespace Reflection
 // `func_specifiers_` depends on the scope. At namespace scope it must be `inline` (if the file is not a header, empty string may be used instead). At class scope it must be `friend`.
 #define ReflectExistingEnum(type_, func_specifiers_, seq_) \
     /* Interface: String->value map. */\
-    func_specifiers_ const auto &reflection_interface_enum_string_value_map(const type_ *) { static ::std::map<::std::string, type_> ret{ PP0_SEQ_APPLY(seq_, REFL0_ReflectEnum_Func_StringValueMap, PP0_F_COMMA, type_) }; return ret; } \
+    func_specifiers_ const auto &reflection_interface_enum_string_value_map(const type_ *) { static ::std::unordered_map<::std::string, type_> ret{ PP0_SEQ_APPLY(seq_, REFL0_ReflectEnum_Func_StringValueMap, PP0_F_COMMA, type_) }; return ret; } \
     /* Interface: Value->string map. */\
-    func_specifiers_ const auto &reflection_interface_enum_value_string_map(const type_ *) { static ::std::map<type_, ::std::string> ret{ PP0_SEQ_APPLY(seq_, REFL0_ReflectEnum_Func_ValueStringMap, PP0_F_COMMA, type_) }; return ret; }
+    func_specifiers_ const auto &reflection_interface_enum_value_string_map(const type_ *) { static ::std::unordered_map<type_, ::std::string> ret{ PP0_SEQ_APPLY(seq_, REFL0_ReflectEnum_Func_ValueStringMap, PP0_F_COMMA, type_) }; return ret; }
 
 #define REFL0_ReflectEnum_Func_StringValueMap(i, type, ...) { PP0_STR(PP0_VA_AT(0, __VA_ARGS__)) , type::PP0_VA_AT(0, __VA_ARGS__) }
 #define REFL0_ReflectEnum_Func_ValueStringMap(i, type, ...) { type::PP0_VA_AT(0, __VA_ARGS__) , PP0_STR(PP0_VA_AT(0, __VA_ARGS__)) }
