@@ -1,6 +1,6 @@
 {
 	groups = [
-		("walls",["blue wall","orange wall", "metal wall"]),
+		{name = "walls", tiles = ["blue wall","orange wall", "metal wall"]},
 	],
 	tiles = [
 		{	
@@ -9,8 +9,8 @@
 			va_default = "main",
 			va_display = "main",
 			variants = [
-				("main",(1,0)),
-				("alt" ,(0,0)),
+				{name = "main", texture = (1,0)},
+				{name = "alt" , texture = (0,0)},
 			],
 			rules = [],
 		},
@@ -20,8 +20,8 @@
 			va_default = "main",
 			va_display = "main",
 			variants = [
-				("main",(0,1)),
-				("alt" ,(1,1)),
+				{name = "main", texture = (0,1)},
+				{name = "alt" , texture = (1,1)},
 			],
 			rules = [],
 		},
@@ -31,10 +31,10 @@
 			va_default = "fill",
 			va_display = "main",
 			variants = [
-				("main",(0,2)),
-				("h"   ,(1,2)),
-				("v"   ,(2,2)),
-				("fill",(3,2)),
+				{name = "main", texture = (0,2)},
+				{name = "h"   , texture = (1,2)},
+				{name = "v"   , texture = (2,2)},
+				{name = "fill", texture = (4,2), size = (3,3), offset = (-1,-1)},
 			],
 			rules = [],
 		},
