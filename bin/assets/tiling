@@ -16,13 +16,18 @@
 			],
 			rules = [
 				{
-					results = [{name = "main"}, {name = "main_1", chance = 0.5}],
+					results = [{name = "main"}],
 					req_variants = ["main"],
 				},
 				{
 					results = [{name = "fill"}, {name = "fill_1", chance = 0.25}],
 					requires = [{name = "blue wall", offset = ( 0, 1)}],
 					matrices = [((0,1),(-1,0)), ((0,-1),(1,0)), ((-1,0),(0,-1))],
+				},
+				{
+					results = [{name = "main"}, {name = "main_1", chance = 0.5}],
+					req_variants = ["main"],
+					modulo_pos = {size = (2,2), offsets = [(0,0), (1,1)]},
 				},
 			],
 		},

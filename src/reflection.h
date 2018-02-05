@@ -722,8 +722,12 @@ namespace Reflection
           private:
             template <typename T, typename = void> struct container_value_t_impl {using type = std::remove_const_t<std::remove_reference_t<decltype(*std::declval<container_const_iterator_t<T>>())>>;};
             template <typename T> struct container_value_t_impl<T, container_const_iterator_t<T>> {using type = void;};
+
+            template <typename T, typename = void> struct container_make_value_type_mutable_impl {using type = std::remove_const_t<T>;};
+            template <typename A, typename B> struct container_make_value_type_mutable_impl<std::pair<A,B>> {using type = std::pair<std::remove_const_t<A>, std::remove_const_t<B>>;};
           public:
             template <typename T> using container_value_t          = typename container_value_t_impl<T>::type;
+            template <typename T> using container_mutable_value_t  = typename container_make_value_type_mutable_impl<container_value_t<T>>::type; // This is good for making mutable temporary objects to insert to a container.
 
             template <typename T> static std::size_t             container_size       (const T &obj) {return reflection_interface_container_size  (&obj);}
             template <typename T> static auto                    container_begin      (      T &obj) {return reflection_interface_container_begin (&obj);}
@@ -1191,7 +1195,7 @@ namespace Reflection
                         break;
                     }
 
-                    Interface::container_value_t<T> tmp;
+                    Interface::container_mutable_value_t<T> tmp;
 
                     if (verbose_errors) stack.push_back((const char *)index); // Push field name.
 
@@ -1376,7 +1380,7 @@ namespace Reflection
 
             for (uint32_t i = 0; i < size; i++)
             {
-                Interface::container_value_t<T> tmp;
+                Interface::container_mutable_value_t<T> tmp;
                 buf = from_bytes(tmp, buf, buf_end);
                 if (!buf)
                     return 0;

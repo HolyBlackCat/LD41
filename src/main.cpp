@@ -390,6 +390,11 @@ namespace Objects
                     (int index;), // Tile index or group index.
                     (bool is_group;),
                 ))
+                ReflectStruct(ModuloPosition, (
+                    (ivec2)(size),
+                    (std::unordered_set<ivec2>)(offsets),
+                    (bool apply = 0;),
+                ))
 
                 ReflectStruct(Dupe, (
                     (imat2)(matrix), // This matrix will applied to each offset of the new rule.
@@ -398,11 +403,13 @@ namespace Objects
 
                 Reflect(TileRule)
                 (
+                    (int original_index;),
                     (std::vector<Result>)(results),
                     (std::vector<Requirement>)(requires,requires_not)(={}),
                     (std::vector<std::string>)(req_variants)(={}), // The current tile must have one of those variants for the rule to work.
-                    (std::vector<imat2>)(matrices)(={}), // All requirements will be copied with these matrices applied to offsets.
-                    (std::vector<Dupe>)(duplicate)(={}), // After that, this rule will be duplicated for each element of this vector.
+                    (std::vector<imat2>)(matrices)(={}), // All requirements will be copied with these matrices applied to offsets (after handling `duplicate`).
+                    (ModuloPosition)(modulo_pos)(={ivec2(1), {}}), // The current tile position modulo `size` must be one of `offsets` for this rule to work.
+                    (std::vector<Dupe>)(duplicate)(={}), // This rule will be duplicated for each element of this vector.
                     (std::vector<int> req_variant_indices = {};), // This will be sorted.
                 )
 
@@ -414,11 +421,11 @@ namespace Objects
                         return std::binary_search(req_variant_indices.begin(), req_variant_indices.end(), variant_index);
                 }
 
-                void Finalize(std::string tile_name, int rule_index)
+                void Finalize(std::string tile_name)
                 {
                     { // Check that result vector is not empty
                         if (results.empty())
-                            throw std::runtime_error(Str("Result vector of rule ", rule_index, " for tile `", tile_name, "` is empty."));
+                            throw std::runtime_error(Str("Result vector of rule ", original_index, " for tile `", tile_name, "` is empty."));
                     }
 
                     { // Fix chances
@@ -432,7 +439,7 @@ namespace Objects
                                 need_init++;
                         }
                         if (sum > 1)
-                            throw std::runtime_error(Str("Results of the rule ", rule_index, " for tile `", tile_name, "` have total probability greater than 1."));
+                            throw std::runtime_error(Str("Results of the rule ", original_index, " for tile `", tile_name, "` have total probability greater than 1."));
                         if (need_init > 0)
                         {
                             sum = (1 - sum) / need_init;
@@ -440,6 +447,20 @@ namespace Objects
                                 if (it.chance < 0)
                                     it.chance = sum;
                         }
+                    }
+
+                    { // Check modulo position settings
+                        if ((modulo_pos.size < 1).any())
+                            throw std::runtime_error(Str("Rectangle size for modulo position for the rule ", original_index, " for tile `", tile_name, "` is smaller than 1 in at least one dimension."));
+
+                        modulo_pos.apply = (modulo_pos.size != ivec2(1));
+
+                        if (modulo_pos.apply && modulo_pos.offsets.empty())
+                            throw std::runtime_error(Str("List of modulo offsets for the rule ", original_index, " for tile `", tile_name, "` is empty."));
+
+                        for (const auto &offset : modulo_pos.offsets)
+                            if ((offset < 0).any() || (offset >= modulo_pos.size).any())
+                                throw std::runtime_error(Str("Modulo offset ", offset," for the rule ", original_index, " for tile `", tile_name, "` is invalid."));
                     }
 
                     { // Copy requirements according to matrices
@@ -532,6 +553,12 @@ namespace Objects
                     }
 
                     { // Rules
+                        { // Assign indices
+                            int index = 0;
+                            for (auto &it : rules)
+                                it.original_index = index++;
+                        }
+
                         // Make duplicates (we do it before finalizing, because finalizing applies requirement matrices and checks result vectors)
                         for (auto rule_it = rules.begin(); rule_it != rules.end();)
                         {
@@ -553,9 +580,8 @@ namespace Objects
                         }
 
                         // Finalize
-                        int index = 0;
                         for (auto &it : rules)
-                            it.Finalize(name, index++);
+                            it.Finalize(name);
 
                         // Get variant indices for results and required variants
                         for (auto &rule : rules)
@@ -1107,6 +1133,12 @@ namespace Objects
                 {
                     if (!rule.CanBeAppliedToVariant(new_variant_index))
                         continue;
+
+                    if (rule.modulo_pos.apply)
+                    {
+                        if (rule.modulo_pos.offsets.count(pos % rule.modulo_pos.size) == 0) // We don't need `mod_ex` here, position will never be negative anyway.
+                            continue;
+                    }
 
                     bool ok = 1;
                     for (const auto &req : rule.requires)
