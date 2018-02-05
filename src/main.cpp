@@ -391,12 +391,18 @@ namespace Objects
                     (bool is_group;),
                 ))
 
+                ReflectStruct(Dupe, (
+                    (imat2)(matrix), // This matrix will applied to each offset of the new rule.
+                    (std::vector<Result>)(results)(={}), // If this is not empty, it will be used instead of the original rule list.
+                ))
+
                 Reflect(TileRule)
                 (
                     (std::vector<Result>)(results),
                     (std::vector<Requirement>)(requires,requires_not)(={}),
                     (std::vector<std::string>)(req_variants)(={}), // The current tile must have one of those variants for the rule to work.
                     (std::vector<imat2>)(matrices)(={}), // All requirements will be copied with these matrices applied to offsets.
+                    (std::vector<Dupe>)(duplicate)(={}), // After that, this rule will be duplicated for each element of this vector.
                     (std::vector<int> req_variant_indices = {};), // This will be sorted.
                 )
 
@@ -526,6 +532,26 @@ namespace Objects
                     }
 
                     { // Rules
+                        // Make duplicates (we do it before finalizing, because finalizing applies requirement matrices and checks result vectors)
+                        for (auto rule_it = rules.begin(); rule_it != rules.end();)
+                        {
+                            auto &original_rule = *rule_it++; // Sic! We want to increment it now to insert at the right place later.
+
+                            for (const auto &dupe : original_rule.duplicate)
+                            {
+                                rule_it = rules.insert(rule_it, original_rule);
+
+                                for (auto mem_ptr : {&TileRule::requires, &TileRule::requires_not})
+                                for (auto &req : (*rule_it).*mem_ptr)
+                                    req.offset = dupe.matrix /mul/ req.offset;
+
+                                if (dupe.results.size() > 0)
+                                    rule_it->results = dupe.results;
+
+                                rule_it++;
+                            }
+                        }
+
                         // Finalize
                         int index = 0;
                         for (auto &it : rules)
@@ -550,7 +576,6 @@ namespace Objects
                             }
                             std::sort(rule.req_variant_indices.begin(), rule.req_variant_indices.end());
                         }
-
                     }
                 }
 
