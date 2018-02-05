@@ -1,6 +1,6 @@
 {
 	groups = [
-		{name = "walls", tiles = ["blue wall","orange wall", "metal wall"]},
+		{name = "metal merge", tiles = ["metal wall", "blue wall"]},
 	],
 	tiles = [
 		{	
@@ -9,10 +9,22 @@
 			va_default = "main",
 			va_display = "main",
 			variants = [
-				{name = "main", texture = (1,0)},
-				{name = "alt" , texture = (0,0)},
+				{name = "main"  , texture = (0,0)},
+				{name = "fill"  , texture = (1,0)},
+				{name = "fill_1", texture = (2,0)},
+				{name = "main_1", texture = (3,0)},
 			],
-			rules = [],
+			rules = [
+				{
+					results = [{name = "main"}, {name = "main_1", chance = 0.5}],
+					req_variants = ["main"],
+				},
+				{
+					results = [{name = "fill"}, {name = "fill_1", chance = 0.25}],
+					requires = [{name = "blue wall", offset = ( 0, 1)}],
+					matrices = [((0,1),(-1,0)), ((0,-1),(1,0)), ((-1,0),(0,-1))],
+				},
+			],
 		},
 		{	
 			name = "orange wall",
@@ -28,15 +40,49 @@
 		{	
 			name = "metal wall",
 			layer = la_mid,
-			va_default = "fill",
-			va_display = "main",
+			va_default = "corner",
+			va_display = "corner",
 			variants = [
-				{name = "main", texture = (0,2)},
-				{name = "h"   , texture = (1,2)},
-				{name = "v"   , texture = (2,2)},
-				{name = "fill", texture = (4,2), size = (3,3), offset = (-1,-1)},
+				{name = "corner", texture = (0,2)},
+				{name = "beam_h", texture = (1,2)},
+				{name = "beam_v", texture = (2,2)},
+				{name = "edge"  , texture = (3,2)},
+				{name = "edge_1", texture = (4,2)},
+				{name = "edge_2", texture = (5,2)},
+				{name = "fill"  , texture = (6,2)},
 			],
-			rules = [],
+			rules = [
+				{
+					results = [{name = "beam_h"}],
+					requires = [{name = "metal merge", offset = (-1,0)},
+								{name = "metal merge", offset = ( 1,0)}],
+				},
+				{
+					results = [{name = "beam_v"}],
+					requires = [{name = "metal merge", offset = (0,-1)},
+								{name = "metal merge", offset = (0, 1)}],
+				},
+				{
+					results = [{name = "corner"}],
+					requires = [{name = "metal merge", offset = (0,1)}],
+					matrices = [((0,1),(-1,0)), ((0,-1),(1,0)), ((-1,0),(0,-1))],
+				},
+				{
+					results = [{name = "edge"}, {name = "edge_1", chance = 0.25}, {name = "edge_2", chance = 0.25}],
+					requires = [{name = "metal merge", offset = ( 0, 1)},
+								{name = "metal merge", offset = ( 1, 1)}],
+					matrices = [((0,1),(-1,0)), ((0,-1),(1,0)), ((-1,0),(0,-1))],
+				},
+				{
+					req_variants = ["edge", "edge_1", "edge_2"],
+					results = [{name = "fill"}],
+					requires = [{name = "metal merge", offset = (-1, 2)},
+								{name = "metal merge", offset = ( 0, 2)},
+								{name = "metal merge", offset = ( 1, 2)},
+								{name = "metal merge", offset = ( 2, 2)}],
+					matrices = [((0,1),(-1,0)), ((0,-1),(1,0)), ((-1,0),(0,-1))],
+				},
+			],
 		},
 	]
 }

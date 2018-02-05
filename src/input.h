@@ -174,4 +174,6 @@ namespace Input
     }
 }
 
+namespace Keys = Input::Keys;
+
 #endif

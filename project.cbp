@@ -115,6 +115,7 @@
 		<Unit filename="src/preprocessor.h" />
 		<Unit filename="src/program.cpp" />
 		<Unit filename="src/program.h" />
+		<Unit filename="src/random.h" />
 		<Unit filename="src/reflection.h" />
 		<Unit filename="src/renderers2d.h" />
 		<Unit filename="src/scenes.h" />

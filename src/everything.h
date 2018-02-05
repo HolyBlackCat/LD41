@@ -6,6 +6,7 @@
 #include "mat.h"
 #include "preprocessor.h"
 #include "program.h"
+#include "random.h"
 #include "reflection.h"
 #include "renderers2d.h"
 #include "scenes.h"

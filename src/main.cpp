@@ -23,7 +23,6 @@ Graphics::CharMap font_tiny;
 
 Renderers::Poly2D r;
 
-namespace Keys = Input::Keys;
 Input::Mouse mouse;
 
 namespace Shaders
@@ -282,31 +281,37 @@ namespace Objects
 
         class Tiling
         {
+          public:
             struct Group
             {
                 Reflect(Group)
                 (
                     (std::string)(name),
                     (std::vector<std::string>)(tiles),
+                    (std::vector<int> indices = {};),
                 )
 
                 void Finalize()
                 {
                     // Check for empty name
                     if (name.empty())
-                        Program::Error("Attempt to create a tile group with an empty name.");
+                        throw std::runtime_error("Attempt to create a tile group with an empty name.");
 
                     // Sort
                     std::sort(tiles.begin(), tiles.end());
 
                     // Check for duplicates
                     if (auto it = std::adjacent_find(tiles.begin(), tiles.end()); it != tiles.end())
-                        Program::Error(Str("Duplicate tile named `", *it, "` in group `", name, "`."));
+                        throw std::runtime_error(Str("Duplicate tile named `", *it, "` in group `", name, "`."));
                 }
 
                 bool Contains(std::string name) const
                 {
                     return std::binary_search(tiles.begin(), tiles.end(), name);
+                }
+                bool Contains(int index) const
+                {
+                    return std::binary_search(indices.begin(), indices.end(), index);
                 }
 
                 explicit operator const std::string &() const {return name;}
@@ -320,7 +325,7 @@ namespace Objects
                 Reflect(TileVariant)
                 (
                     (std::string)(name),
-                    (ivec2)(texture),
+                    (ivec2)(texture), // Effectively this is the tile id, `tile_id_t`.
                     (ivec2)(size)(=ivec2(1)),
                     (ivec2)(offset)(=ivec2(0)),
                     (ivec2)(tex_offset)(=ivec2(0)),
@@ -335,10 +340,13 @@ namespace Objects
 
                 void Finalize(std::string tile_name) // This is not const to prevent calling it from outside.
                 {
+                    if (name.empty())
+                        throw std::runtime_error(Str("Variant `", name, "` of tile `", tile_name, "` has empty name."));
+
                     if ((size < 1).any())
-                        Program::Error(Str("Variant `", name, "` of tile `", tile_name, "` has non-positive size."));
+                        throw std::runtime_error(Str("Variant `", name, "` of tile `", tile_name, "` has non-positive size."));
                     if ((texture < 0).any() || (texture + size > sheet_size).any())
-                        Program::Error(Str("Texture coordinates for variant `", name, "` of tile `", tile_name, "` are out of range."));
+                        throw std::runtime_error(Str("Texture coordinates for variant `", name, "` of tile `", tile_name, "` are out of range."));
 
                     small = (size == ivec2(1));
                     effective_texture_pixel_pos    = sheet_tex_pos + (texture + offset + tex_offset) * tile_size;
@@ -374,36 +382,74 @@ namespace Objects
                 ReflectStruct(Result, (
                     (std::string)(name),
                     (float)(chance)(=-1),
+                    (int index;), // Sic! We don't reflect this.
                 ))
                 ReflectStruct(Requirement, (
-                    (std::string)(name),
+                    (std::string)(name), // This can be `""`, which means 'any tile` (then `index == -1`, `is_group == 0`).
                     (ivec2)(offset),
+                    (int index;), // Tile index or group index.
+                    (bool is_group;),
                 ))
 
                 Reflect(TileRule)
                 (
                     (std::vector<Result>)(results),
-                    (std::vector<Requirement>)(requires),
+                    (std::vector<Requirement>)(requires,requires_not)(={}),
+                    (std::vector<std::string>)(req_variants)(={}), // The current tile must have one of those variants for the rule to work.
+                    (std::vector<imat2>)(matrices)(={}), // All requirements will be copied with these matrices applied to offsets.
+                    (std::vector<int> req_variant_indices = {};), // This will be sorted.
                 )
+
+                bool CanBeAppliedToVariant(int variant_index) const
+                {
+                    if (req_variant_indices.empty())
+                        return 1;
+                    else
+                        return std::binary_search(req_variant_indices.begin(), req_variant_indices.end(), variant_index);
+                }
 
                 void Finalize(std::string tile_name, int rule_index)
                 {
-                    float sum = 0;
-                    int need_init = 0;
-                    for (const auto &it : results)
-                    {
-                        if (it.chance >= 0)
-                            sum += it.chance;
-                        else
-                            need_init++;
+                    { // Check that result vector is not empty
+                        if (results.empty())
+                            throw std::runtime_error(Str("Result vector of rule ", rule_index, " for tile `", tile_name, "` is empty."));
                     }
-                    if (sum > 1)
-                        Program::Error(Str("Results of the rule ", rule_index, " for tile `", tile_name, "` have total probability greater than 1."));
-                    if (need_init > 0)
-                    {
-                        sum = (1 - sum) / need_init;
-                        for (auto &it : results)
-                            it.chance = sum;
+
+                    { // Fix chances
+                        float sum = 0;
+                        int need_init = 0;
+                        for (const auto &it : results)
+                        {
+                            if (it.chance >= 0)
+                                sum += it.chance;
+                            else
+                                need_init++;
+                        }
+                        if (sum > 1)
+                            throw std::runtime_error(Str("Results of the rule ", rule_index, " for tile `", tile_name, "` have total probability greater than 1."));
+                        if (need_init > 0)
+                        {
+                            sum = (1 - sum) / need_init;
+                            for (auto &it : results)
+                                if (it.chance < 0)
+                                    it.chance = sum;
+                        }
+                    }
+
+                    { // Copy requirements according to matrices
+                        for (auto mem_ptr : {&TileRule::requires, &TileRule::requires_not})
+                        {
+                            auto &vec = this->*mem_ptr;
+                            auto copy = vec;
+
+                            for (const auto &matrix : matrices)
+                            {
+                                auto tmp = copy; // Sic! We can't operate directly on the copy.
+                                for (auto &req : tmp)
+                                    req.offset = matrix /mul/ req.offset;
+                                vec.insert(vec.end(), tmp.begin(), tmp.end());
+                            }
+                        }
                     }
                 }
             };
@@ -435,7 +481,7 @@ namespace Objects
                 {
                     auto it = std::lower_bound(variants.begin(), variants.end(), variant_name);
                     if (it == variants.end() || it->name != variant_name)
-                        Program::Error(Str("Tile `", name, "` has no variant `", variant_name, "`."));
+                        throw std::runtime_error(Str("Tile `", name, "` has no variant `", variant_name, "`."));
                     return *it;
                 }
 
@@ -455,11 +501,11 @@ namespace Objects
 
                     // Check for empty name
                     if (name.empty())
-                        Program::Error("Attempt to create a tile with an empty name.");
+                        throw std::runtime_error("Attempt to create a tile with an empty name.");
 
                     // Validate layer enum
                     if (layer < 0 || layer >= num_layers)
-                        Program::Error(Str("Invalid layer enum value for tile `", name, "`."));
+                        throw std::runtime_error(Str("Invalid layer enum value for tile `", name, "`."));
 
                     { // Variants
                         // Validate textures
@@ -469,20 +515,42 @@ namespace Objects
                         std::sort(variants.begin(), variants.end());
                         // Check for duplicates
                         if (auto it = std::adjacent_find(variants.begin(), variants.end()); it != variants.end())
-                            Program::Error(Str("Duplicate variant `", it->name, "` for tile `", name, "`."));
+                            throw std::runtime_error(Str("Duplicate variant `", it->name, "` for tile `", name, "`."));
                         // Get indices for default/display variants
                         va_default_index = VariantIndex(va_default);
                         if (va_default_index == -1)
-                            Program::Error(Str("Default variant `", va_default, "` for tile `", name, "` doesn't exist."));
+                            throw std::runtime_error(Str("Default variant `", va_default, "` for tile `", name, "` doesn't exist."));
                         va_display_index = VariantIndex(va_display);
                         if (va_display_index == -1)
-                            Program::Error(Str("Display variant `", va_display, "` for tile `", name, "` doesn't exist."));
+                            throw std::runtime_error(Str("Display variant `", va_display, "` for tile `", name, "` doesn't exist."));
                     }
 
                     { // Rules
+                        // Finalize
                         int index = 0;
                         for (auto &it : rules)
                             it.Finalize(name, index++);
+
+                        // Get variant indices for results and required variants
+                        for (auto &rule : rules)
+                        {
+                            for (auto &result : rule.results)
+                            {
+                                result.index = VariantIndex(result.name);
+                                if (result.index == -1)
+                                    throw std::runtime_error(Str("A tiling rule result for tile `", name, "` references non-existent variant named `", result.name, "`."));
+                            }
+
+                            for (const auto &va_name : rule.req_variants)
+                            {
+                                int index = VariantIndex(va_name);
+                                if (index == -1)
+                                    throw std::runtime_error(Str("A tiling rule for tile `", name, "` references non-existent variant named `", va_name, "`."));
+                                rule.req_variant_indices.push_back(index);
+                            }
+                            std::sort(rule.req_variant_indices.begin(), rule.req_variant_indices.end());
+                        }
+
                     }
                 }
 
@@ -510,6 +578,8 @@ namespace Objects
                 };
                 std::unordered_map<tile_id_t, TileInfo> tile_info;
 
+                ivec2 autotiling_range;
+
 
                 ivec2 max_texture_offset_negative = ivec2(std::numeric_limits<int>::max()),
                       max_texture_offset_positive = ivec2(std::numeric_limits<int>::min());
@@ -524,6 +594,21 @@ namespace Objects
                     return std::binary_search(tiles.begin(), tiles.end(), name);
                 }
 
+                int GroupIndex(std::string name) const
+                {
+                    auto it = std::lower_bound(groups.begin(), groups.end(), name);
+                    if (it == groups.end() || it->name != name)
+                        return -1;
+                    return it - groups.begin();
+                }
+                int TileIndex(std::string name) const
+                {
+                    auto it = std::lower_bound(tiles.begin(), tiles.end(), name);
+                    if (it == tiles.end() || it->name != name)
+                        return -1;
+                    return it - tiles.begin();
+                }
+
                 void Finalize()
                 {
                     { // Groups
@@ -534,7 +619,7 @@ namespace Objects
                         std::sort(groups.begin(), groups.end());
                         // Check for duplicates
                         if (auto it = std::adjacent_find(groups.begin(), groups.end()); it != groups.end())
-                            Program::Error(Str("A duplicate tile group named `", it->name, "`."));
+                            throw std::runtime_error(Str("A duplicate tile group named `", it->name, "`."));
                     }
 
                     { // Tiles
@@ -546,18 +631,26 @@ namespace Objects
                         std::sort(tiles.begin(), tiles.end());
                         // Check for duplicates
                         if (auto it = std::adjacent_find(tiles.begin(), tiles.end()); it != tiles.end())
-                            Program::Error(Str("A duplicate tile named `", it->name, "`."));
+                            throw std::runtime_error(Str("A duplicate tile named `", it->name, "`."));
                         // Check for collision with group names
                         for (const auto &it : tiles)
                             if (GroupExists(it.name))
-                                Program::Error(Str("A name collision between a tile named `", it.name, "` and a group with the same name."));
+                                throw std::runtime_error(Str("A name collision between a tile named `", it.name, "` and a group with the same name."));
                     }
 
-                    { // Check if groups contain valid tiles
-                        for (const auto &group : groups)
+                    { // Get tile indices for groups
+                        for (auto &group : groups)
+                        {
                             for (const auto &name : group.tiles)
-                                if (!TileExists(name))
-                                    Program::Error(Str("Tile named `", name, "` referenced in group `", group.name, "` doesn't exist."));
+                            {
+                                int index = TileIndex(name);
+                                if (index == -1)
+                                    throw std::runtime_error(Str("Tile named `", name, "` referenced in group `", group.name, "` doesn't exist."));
+                                group.indices.push_back(index);
+                            }
+
+                            std::sort(group.indices.begin(), group.indices.end());
+                        }
                     }
 
                     { // Map texture coordinates to tile information
@@ -581,7 +674,7 @@ namespace Objects
 
                                     auto [it, ok] = tile_info.insert({sheet_pos, info});
                                     if (!ok)
-                                        Program::Error(Str("Tile at position ", sheet_pos, " in the sheet is refenced twice: in variant `", variant.name, "` of tile `", tile.name, "` and "
+                                        throw std::runtime_error(Str("Tile at position ", sheet_pos, " in the sheet is refenced twice: in variant `", variant.name, "` of tile `", tile.name, "` and "
                                                            "in variant `", tiles[it->second.tile_index].variants[it->second.variant_index].name, "` of tile `", tiles[it->second.tile_index].name, "`."));
                                 }
                             }
@@ -617,8 +710,46 @@ namespace Objects
                             std::sort(vec.begin(), vec.end(), [&](int a, int b){return tiles[a].original_index < tiles[b].original_index;});
                         }
                     }
+
+                    { // Get max autotiling range
+                        autotiling_range = ivec2(0);
+                        for (const auto &tile : tiles)
+                        for (const auto &rule : tile.rules)
+                        for (const auto *req_list : {&rule.requires, &rule.requires_not})
+                        for (const auto &req : *req_list)
+                        {
+                            ivec2 range = abs(req.offset);
+                            if (autotiling_range.x < range.x) autotiling_range.x = range.x;
+                            if (autotiling_range.y < range.y) autotiling_range.y = range.y;
+                        }
+                    }
+
+                    { // Get indices for autotiling requirements
+                        for (auto &tile : tiles)
+                        for (auto &rule : tile.rules)
+                        for (auto *req_list : {&rule.requires, &rule.requires_not})
+                        for (auto &req : *req_list)
+                        {
+                            req.index = TileIndex(req.name);
+                            req.is_group = 0;
+
+                            if (req.index == -1)
+                            {
+                                if (req.name == "")
+                                    continue;
+
+                                req.index = GroupIndex(req.name);
+                                req.is_group = 1;
+
+                                if (req.index == -1)
+                                    throw std::runtime_error(Str("Autotiling rule for tile `", tile.name, "` references `", req.name, "`, which is neither a tile nor a tile group."));
+                            }
+                        }
+                    }
                 }
             };
+
+          private:
             Data data;
 
             std::string file_name;
@@ -626,20 +757,32 @@ namespace Objects
           public:
             Tiling(std::string file_name) : file_name(file_name)
             {
-                Reload();
+                Reload(1);
             }
 
-            void Reload()
+            void Reload(bool fatal_errors = 0)
             {
+                Data data_copy = data;
                 data = {};
 
                 Utils::MemoryFile file(file_name);
 
-                std::string error_message;
-                if (auto ptr = Reflection::from_string(data, (char *)file.Data(), &error_message); ptr != (char *)file.Data() + file.Size())
-                    Program::Error(Str("Unable to load tiling settings:\n", (ptr == 0 ? error_message : "Extra data at the end of input.")));
+                try
+                {
+                    std::string error_message;
+                    if (auto ptr = Reflection::from_string(data, (char *)file.Data(), &error_message); ptr != (char *)file.Data() + file.Size())
+                        throw std::runtime_error(Str("Unable to parse tiling settings:\n", (ptr == 0 ? error_message : "Extra data at the end of input.")));
 
-                data.Finalize();
+                    data.Finalize();
+                }
+                catch (std::runtime_error &e)
+                {
+                    if (fatal_errors)
+                        Program::Error(e.what());
+
+                    UI::MessageBox("Error!", e.what(), UI::warning);
+                    data = data_copy;
+                }
             }
 
             bool TileExists(tile_id_t id) const
@@ -650,12 +793,39 @@ namespace Objects
                 return 1;
             }
 
-            const TileVariant &GetVariant(tile_id_t id) const
+            int GetTileIndex(tile_id_t id) const
             {
                 auto it = data.tile_info.find(id);
                 if (it == data.tile_info.end() || it->second.part_of_multitile_image)
                     Program::Error(Str("Attempt to get tile variant for id ", ivec2(id), " which doesn't exist."));
+                return it->second.tile_index;
+            }
+            int GetVariantIndex(tile_id_t id) const
+            {
+                auto it = data.tile_info.find(id);
+                if (it == data.tile_info.end() || it->second.part_of_multitile_image)
+                    Program::Error(Str("Attempt to get tile variant for id ", ivec2(id), " which doesn't exist."));
+                return it->second.variant_index;
+            }
+
+            const Tile &GetTile(tile_id_t id) const
+            {
+                auto it = data.tile_info.find(id);
+                if (it == data.tile_info.end() || it->second.part_of_multitile_image)
+                    Program::Error(Str("Attempt to get tile information for id ", ivec2(id), " which doesn't exist."));
+                return data.tiles[it->second.tile_index];
+            }
+            const TileVariant &GetVariant(tile_id_t id) const
+            {
+                auto it = data.tile_info.find(id);
+                if (it == data.tile_info.end() || it->second.part_of_multitile_image)
+                    Program::Error(Str("Attempt to get tile information for id ", ivec2(id), " which doesn't exist."));
                 return data.tiles[it->second.tile_index].variants[it->second.variant_index];
+            }
+
+            const std::vector<TileRule> &GetTileRules(int tile_index) const
+            {
+                return data.tiles[tile_index].rules;
             }
 
             // To make sure all the large tile textures get into your camera, increare rendered tile range by those values (add them to top-left and bottom-right corners respectively).
@@ -672,10 +842,19 @@ namespace Objects
             {
                 return data.tiles[index];
             }
+            const Group &GroupByIndex(int index) const
+            {
+                return data.groups[index];
+            }
 
             const std::vector<int> &TileIndicesForLayer(LayerEnum layer) const
             {
                 return data.layer_tile_indices[layer];
+            }
+
+            ivec2 AutotilingRange() const
+            {
+                return data.autotiling_range;
             }
         };
         inline static Tiling tiling{"assets/tiling"};
@@ -840,6 +1019,140 @@ namespace Objects
             }
         }
 
+        bool AnyTileExistsAt(ivec2 pos) const
+        {
+            auto tile = Get(pos);
+            for (int layer = 0; layer < num_layers; layer++)
+                if (tile.*layer_list[layer] != no_tile)
+                    return 1;
+            return 0;
+        }
+        bool TileExistsAt(int index, ivec2 pos) const
+        {
+            layer_mem_ptr_t layer = layer_list[tiling.TileByIndex(index).layer];
+            tile_id_t tile_id = Get(pos, layer);
+            if (tile_id == no_tile)
+                return 0;
+            return tiling.GetTileIndex(tile_id) == index;
+        }
+        bool TileFromGroupExistsAt(int group_index, ivec2 pos) const
+        {
+            const auto &group = tiling.GroupByIndex(group_index);
+            auto tile = Get(pos);
+            for (int layer = 0; layer < num_layers; layer++)
+            {
+                tile_id_t tile_id = tile.*layer_list[layer];
+                if (tile_id != no_tile && group.Contains(tiling.GetTileIndex(tile_id)))
+                    return 1;
+            }
+            return 0;
+        }
+
+        bool CheckTileRequirement(const Tiling::TileRule::Requirement &req, ivec2 pos) // Offset mentioned in the requirement is added to `pos`.
+        {
+            pos += req.offset;
+            if (req.is_group)
+            {
+                return TileFromGroupExistsAt(req.index, pos);
+            }
+            else
+            {
+                if (req.index == -1)
+                    return AnyTileExistsAt(pos);
+                else
+                    return TileExistsAt(req.index, pos);
+            }
+        }
+
+        void RunAutotilerForOneTile(ivec2 pos)
+        {
+            for (int layer_index = 0; layer_index < num_layers; layer_index++)
+            {
+                layer_mem_ptr_t mem_ptr = layer_list[layer_index];
+                tile_id_t tile_id = Get(pos, mem_ptr);
+                if (tile_id == no_tile)
+                    continue;
+                int tile_index = tiling.GetTileIndex(tile_id);
+                const auto &tile = tiling.TileByIndex(tile_index);
+
+                int new_variant_index = tile.va_default_index;
+
+                auto rules = tiling.GetTileRules(tile_index);
+                for (const auto &rule : rules)
+                {
+                    if (!rule.CanBeAppliedToVariant(new_variant_index))
+                        continue;
+
+                    bool ok = 1;
+                    for (const auto &req : rule.requires)
+                    {
+                        if (!CheckTileRequirement(req, pos))
+                        {
+                            ok = 0;
+                            break;
+                        }
+                    }
+                    if (!ok)
+                        continue;
+                    for (const auto &req_not : rule.requires_not)
+                    {
+                        if (CheckTileRequirement(req_not, pos))
+                        {
+                            ok = 0;
+                            break;
+                        }
+                    }
+                    if (!ok)
+                        continue;
+
+                    const auto &results = rule.results;
+
+                    if (results.size() == 1)
+                    {
+                        new_variant_index = results[0].index;
+                    }
+                    else
+                    {
+                        float r = random_real(1);
+
+                        bool selected = 0;
+
+                        for (std::size_t i = 0; i < results.size() - 1; i++) // Sic! We don't iterate over the last element to avoid potential precision errors if `r == 1`.
+                        {
+                            const auto &result = results[i];
+                            if (r <= result.chance)
+                            {
+                                new_variant_index = result.index;
+                                selected = 1;
+                                break;
+                            }
+                            else
+                            {
+                                r -= result.chance;
+                            }
+                        }
+                        if (!selected)
+                            new_variant_index = results.back().index;
+                    }
+                }
+
+                Set(pos, mem_ptr, tile.variants[new_variant_index].texture);
+            }
+        }
+        void RunAutotiler(ivec2 pos, ivec2 size = ivec2(1)) // Runs autotiler for each tile in the specified rectange, expanded in every direction by `tiling.AutotilingRange()`.
+        {
+            ivec2 range = tiling.AutotilingRange();
+            for (int y = -range.y; y < size.y + range.y; y++)
+            for (int x = -range.x; x < size.x + range.x; x++)
+                RunAutotilerForOneTile(pos + ivec2(x,y));
+        }
+        void RunAutotilerForEntireMap()
+        {
+            for (int y = 0; y <= data.size.y; y++)
+            for (int x = 0; x <= data.size.x; x++)
+                RunAutotilerForOneTile(ivec2(x,y));
+        }
+
         const std::string &FileName() const
         {
             return file_name;
@@ -854,7 +1167,7 @@ namespace Objects
             if (forward_compat)
             {
                 std::string str = Reflection::to_string(data);
-                return Utils::WriteToFile(file_name + ".fwdcompat" + suffix, (uint8_t *)str.data(), str.size(), Utils::compressed);
+                return Utils::WriteToFile(file_name + ".fwdcompat" + suffix, (uint8_t *)str.data(), str.size());
             }
             else
             {
@@ -872,7 +1185,10 @@ namespace Objects
             Utils::MemoryFile file;
             try
             {
-                file.Create((forward_compat ? file_name + ".fwdcompat" : file_name), Utils::compressed);
+                if (forward_compat)
+                    file.Create(file_name + ".fwdcompat");
+                else
+                    file.Create(file_name, Utils::compressed);
             }
             catch(decltype(Utils::file_input_error("","")) &e)
             {
@@ -966,11 +1282,23 @@ namespace Objects
         {
             ivec2 size;
             std::vector<Map::tile_id_t> tiles;
+
+            void ResetGrabbedVariants()
+            {
+                for (auto &tile_id : tiles)
+                {
+                    if (tile_id == Map::no_tile)
+                        continue;
+                    tile_id = Map::tiling.GetTile(tile_id).DefaultVariant().texture;
+                }
+            }
           public:
             void Grab(int tile_index)
             {
                 size = ivec2(1);
                 tiles = {Map::tiling.TileByIndex(tile_index).DefaultVariant().texture};
+
+                ResetGrabbedVariants();
             }
             void Grab(const Map &map, Map::layer_mem_ptr_t layer, ivec2 a, ivec2 b)
             {
@@ -983,6 +1311,8 @@ namespace Objects
                 for (int y = 0; y < size.y; y++)
                 for (int x = 0; x < size.x; x++)
                     tiles[x + y * size.x] = map.Get(ivec2(x,y) + a, layer);
+
+                ResetGrabbedVariants();
             }
             void Release()
             {
@@ -1003,6 +1333,8 @@ namespace Objects
                 for (int y = 0; y < size.y; y++)
                 for (int x = 0; x < size.x; x++)
                     map.Set(ivec2(x,y) + offset, layer, tiles[x + size.x * y]);
+
+                map.RunAutotiler(offset, size);
             }
 
             void Render(ivec2 cam_pos)
@@ -1178,7 +1510,12 @@ namespace Objects
                         LoadMap(scene, Keys::l_alt.down());
                 }
 
-                { // Open/close tile sheet
+                { // Rerunning autotiler
+                    if (Keys::f12.pressed())
+                        map.RunAutotilerForEntireMap();
+                }
+
+                { // Open/close tile list
                     if (!selecting_tiles && Keys::tab.pressed() && !map_selection_button_down)
                     {
                         selecting_tiles = 1;
@@ -1227,7 +1564,7 @@ namespace Objects
                         selecting_tiles_selected_button_pos = ivec2(-1);
                     }
 
-                    if (mouse.left.pressed() && selecting_tiles_button_selected)
+                    if (mouse.left.released() && selecting_tiles_button_selected)
                     {
                         selecting_tiles = 0;
                         grab.Grab(Map::tiling.TileIndicesForLayer(target_layer_enum)[button_index]);
@@ -1358,7 +1695,10 @@ namespace Objects
 
                     // Erasing
                     if (mouse.left.down() && !grab.Grabbed() && !map_selection_button_down && (mouse_pos_changed || mouse.left.pressed()) && map_selection_map_hovered)
+                    {
                         map.Set(mouse_pos, target_layer, Map::no_tile);
+                        map.RunAutotiler(mouse_pos);
+                    }
                 }
             }
         }
@@ -1501,8 +1841,9 @@ namespace Objects
                                        "ALT+<^>v to resize map\n"
                                        "F5 to reload textures and tiling settings\n"
                                        "SPACE to save\n"
-                                       "CTRL+F5 to reload\n"
                                        "(+ALT to save/load in forward-compatible mode)\n"
+                                       "CTRL+F5 to reload resources\n"
+                                       "F12 to rerun autotiler\n"
                                        "F1 to hide this text";
                     }
                     else
