@@ -33,12 +33,11 @@
 		},
 		{	
 			name = "orange wall",
-			layer = la_mid,
+			layer = la_front,
 			va_default = "main",
 			va_display = "main",
 			variants = [
 				{name = "main", texture = (0,1)},
-				{name = "alt" , texture = (1,1)},
 			],
 			rules = [],
 		},

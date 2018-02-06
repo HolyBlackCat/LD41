@@ -244,6 +244,7 @@ namespace Objects
         }
     };
 
+
     class Map
     {
       public:
@@ -889,6 +890,11 @@ namespace Objects
                 return data.max_texture_offset_positive;
             }
 
+            int TileCount() const
+            {
+                return data.tiles.size();
+            }
+
             const Tile &TileByIndex(int index) const
             {
                 return data.tiles[index];
@@ -896,6 +902,11 @@ namespace Objects
             const Group &GroupByIndex(int index) const
             {
                 return data.groups[index];
+            }
+
+            const TileVariant &DefaultVariant(int tile_index) const
+            {
+                return Map::tiling.TileByIndex(tile_index).DefaultVariant();
             }
 
             const std::vector<int> &TileIndicesForLayer(LayerEnum layer) const
@@ -1312,15 +1323,10 @@ namespace Objects
         }
     };
 
-
-
     class MapEditor
     {
         bool enabled = 0;
         ivec2 editor_cam_pos = ivec2(0);
-
-        Map::LayerEnum target_layer_enum = Map::la_mid;
-        Map::layer_mem_ptr_t target_layer = Map::layer_list[target_layer_enum];
 
         enum class OtherLayersHandling {show, transparent, hide};
         OtherLayersHandling other_layers_handling = OtherLayersHandling::show;
@@ -1335,66 +1341,130 @@ namespace Objects
         static constexpr ivec2 selecting_tiles_button_sz = screen_sz / selecting_tiles_buttons_per_screen;
 
 
-        class
+        class MapInterface
         {
-            ivec2 size;
-            std::vector<Map::tile_id_t> tiles;
+            ivec2 grabbed_size = ivec2(0);
 
-            void ResetGrabbedVariants()
+            struct GrabbedLayer
             {
-                for (auto &tile_id : tiles)
-                {
-                    if (tile_id == Map::no_tile)
-                        continue;
-                    tile_id = Map::tiling.GetTile(tile_id).DefaultVariant().texture;
-                }
-            }
+                Map::layer_mem_ptr_t layer;
+                std::vector<Map::tile_id_t> tiles;
+            };
+            std::vector<GrabbedLayer> grabbed_layers;
+
+            // Constructor sets those:
+            Map::LayerEnum target_layer_enum = Map::num_layers;
+            Map::layer_mem_ptr_t target_layer;
+
           public:
-            void Grab(int tile_index)
+            MapInterface()
             {
-                size = ivec2(1);
-                tiles = {Map::tiling.TileByIndex(tile_index).DefaultVariant().texture};
-
-                ResetGrabbedVariants();
+                SelectAllLayers();
             }
-            void Grab(const Map &map, Map::layer_mem_ptr_t layer, ivec2 a, ivec2 b)
+
+            void SelectLayer(Map::LayerEnum layer_enum)
+            {
+                target_layer_enum = layer_enum;
+                if (target_layer_enum != Map::num_layers)
+                    target_layer = Map::layer_list[target_layer_enum];
+                else
+                    target_layer = 0;
+            }
+            void SelectAllLayers()
+            {
+                SelectLayer(Map::num_layers);
+            }
+
+            int AvailableTileCount() const
+            {
+                if (target_layer)
+                    return int(Map::tiling.TileIndicesForLayer(target_layer_enum).size());
+                else
+                    return Map::tiling.TileCount();
+            }
+            int AvailableTileIndex(int avail_index) const // Returns the global index corresponding to an index in the list of available tiles.
+            {
+                if (target_layer)
+                    return Map::tiling.TileIndicesForLayer(target_layer_enum)[avail_index];
+                else
+                    return avail_index;
+            }
+
+            void GrabTile(int avail_index) // The index is used for the list of tiles available for the current layer.
+            {
+                int tile_index = AvailableTileIndex(avail_index);
+
+                grabbed_size = ivec2(1);
+                grabbed_layers = {};
+
+                GrabbedLayer new_grabbed_layer;
+                new_grabbed_layer.layer = Map::layer_list[Map::tiling.TileByIndex(tile_index).layer];
+                new_grabbed_layer.tiles = {Map::tiling.DefaultVariant(tile_index).texture};
+
+                grabbed_layers.push_back(new_grabbed_layer);
+            }
+            void GrabArea(const Map &map, ivec2 a, ivec2 b)
             {
                 if (a.x > b.x) std::swap(a.x, b.x);
                 if (a.y > b.y) std::swap(a.y, b.y);
 
-                size = b - a + 1;
-                tiles = std::vector<Map::tile_id_t>(size.product());
+                grabbed_size = b - a + 1;
+                grabbed_layers = {};
 
-                for (int y = 0; y < size.y; y++)
-                for (int x = 0; x < size.x; x++)
-                    tiles[x + y * size.x] = map.Get(ivec2(x,y) + a, layer);
+                auto GrabLayer = [&](Map::layer_mem_ptr_t layer)
+                {
+                    GrabbedLayer new_grabbed_layer;
 
-                ResetGrabbedVariants();
+                    new_grabbed_layer.layer = layer;
+                    new_grabbed_layer.tiles.resize(grabbed_size.product());
+
+                    for (int y = 0; y < grabbed_size.y; y++)
+                    for (int x = 0; x < grabbed_size.x; x++)
+                    {
+                        Map::tile_id_t tile_id = map.Get(ivec2(x,y) + a, layer);
+                        if (tile_id != Map::no_tile)
+                            tile_id = Map::tiling.DefaultVariant(Map::tiling.GetTileIndex(tile_id)).texture;
+                        new_grabbed_layer.tiles[x + y * grabbed_size.x] = tile_id;
+                    }
+
+                    grabbed_layers.push_back(new_grabbed_layer);
+                };
+
+                if (target_layer)
+                {
+                    GrabLayer(target_layer);
+                }
+                else
+                {
+                    for (int layer_index = 0; layer_index < Map::num_layers; layer_index++)
+                        GrabLayer(Map::layer_list[layer_index]);
+                }
             }
-            void Release()
+            void ReleaseGrab()
             {
-                size = ivec2(0);
-                tiles = {};
+                grabbed_size = ivec2(0);
+                grabbed_layers = {};
             }
             bool Grabbed() const
             {
-                return tiles.size() != 0;
+                return grabbed_layers.size() != 0;
             }
-            ivec2 Size() const
+            ivec2 GrabbedSize() const
             {
-                return size;
+                return grabbed_size;
             }
 
-            void Paste(Map &map, Map::layer_mem_ptr_t layer, ivec2 offset) const
+            void PasteGrabbed(Map &map, ivec2 offset) const
             {
-                for (int y = 0; y < size.y; y++)
-                for (int x = 0; x < size.x; x++)
-                    map.Set(ivec2(x,y) + offset, layer, tiles[x + size.x * y]);
+                for (const auto &grabbed_layer : grabbed_layers)
+                for (int y = 0; y < grabbed_size.y; y++)
+                for (int x = 0; x < grabbed_size.x; x++)
+                    map.Set(ivec2(x,y) + offset, grabbed_layer.layer, grabbed_layer.tiles[x + grabbed_size.x * y]);
 
-                map.RunAutotiler(offset, size);
+                map.RunAutotiler(offset, grabbed_size);
             }
 
-            void Render(ivec2 cam_pos)
+            void RenderGrabbed(ivec2 cam_pos)
             {
                 constexpr int period = 60, air_margin = 1;
                 constexpr float highlight = 1/3., alpha = 3/4., air_alpha = 1/4.;
@@ -1406,44 +1476,86 @@ namespace Objects
                 ivec2 first = first_visible + Map::tiling.MaxTextureOffsetNegative(),
                       last  = last_visible  + Map::tiling.MaxTextureOffsetPositive();
 
-                ivec2 render_offset = max(first - base_offset, 0),
-                      render_size   = min(last - first + 1, size);
+                ivec2 render_offset = max(first - grab_offset, 0),
+                      render_size   = min(last - first + 1, grabbed_size);
 
                 float t = tick_stabilizer.ticks % period / float(period/2);
                 t = (t < 1 ? smoothstep(t) : smoothstep(2-t));
 
-                for (int i = 0; i < 3; i++)
+                for (const auto &grabbed_layer : grabbed_layers)
                 {
-                    bool air_only    = (i == 0),
-                         small_tiles = (i == 1);
-
-                    for (int y = render_offset.y; y < render_size.y; y++)
-                    for (int x = render_offset.x; x < render_size.x; x++)
+                    for (int i = 0; i < 3; i++)
                     {
-                        ivec2 pos = ivec2(x,y);
+                        bool air_only    = (i == 0),
+                             small_tiles = (i == 1);
 
-                        Map::tile_id_t id = tiles[x + size.x * y];
-
-                        if (air_only && id == Map::no_tile)
+                        for (int y = render_offset.y; y < render_size.y; y++)
+                        for (int x = render_offset.x; x < render_size.x; x++)
                         {
-                            r.Quad((pos + base_offset) * tile_size - cam_pos + air_margin, ivec2(tile_size-air_margin*2)).color(fvec3(t)).alpha(air_alpha);
-                        }
-                        if (!air_only && id != Map::no_tile)
-                        {
-                            const auto &variant = Map::tiling.GetVariant(id);
+                            ivec2 pos = ivec2(x,y);
 
-                            if (variant.Small() != small_tiles)
-                                continue;
+                            Map::tile_id_t id = grabbed_layer.tiles[x + grabbed_size.x * y];
 
-                            Map::DrawTile(variant, (pos + base_offset) * tile_size - cam_pos, pos + base_offset, first_visible, last_visible, [&](Renderers::Poly2D::Quad_t &quad){quad.color(fvec3(t)).mix(1-highlight).alpha(alpha);});
+                            if (air_only && id == Map::no_tile)
+                            {
+                                r.Quad((pos + grab_offset) * tile_size - cam_pos + air_margin, ivec2(tile_size-air_margin*2)).color(fvec3(t)).alpha(air_alpha);
+                            }
+                            if (!air_only && id != Map::no_tile)
+                            {
+                                const auto &variant = Map::tiling.GetVariant(id);
+
+                                if (variant.Small() != small_tiles)
+                                    continue;
+
+                                Map::DrawTile(variant, (pos + grab_offset) * tile_size - cam_pos, pos + grab_offset, first_visible, last_visible, [&](Renderers::Poly2D::Quad_t &quad){quad.color(fvec3(t)).mix(1-highlight).alpha(alpha);});
+                            }
                         }
                     }
                 }
             }
 
-            ivec2 base_offset = ivec2(0);
-        }
-        grab;
+            ivec2 grab_offset = ivec2(0);
+
+
+            void EraseArea(Map &map, ivec2 a, ivec2 b)
+            {
+                if (a.x > b.x) std::swap(a.x, b.x);
+                if (a.y > b.y) std::swap(a.y, b.y);
+
+                auto Erase = [&](Map::layer_mem_ptr_t layer)
+                {
+                    for (int y = a.y; y <= b.y; y++)
+                    for (int x = a.x; x <= b.x; x++)
+                        map.Set(ivec2(x,y), layer, Map::no_tile);
+                };
+
+                if (target_layer)
+                {
+                    Erase(target_layer);
+                }
+                else
+                {
+                    for (int layer_index = 0; layer_index < Map::num_layers; layer_index++)
+                        Erase(Map::layer_list[layer_index]);
+                }
+
+                map.RunAutotiler(a, b - a + 1);
+            }
+
+            bool LayerSelected(Map::LayerEnum layer_enum) const
+            {
+                return target_layer_enum == layer_enum || AllLayersSelected();
+            }
+            bool LayerSelected(Map::layer_mem_ptr_t layer) const
+            {
+                return target_layer == layer || AllLayersSelected();
+            }
+            bool AllLayersSelected() const
+            {
+                return target_layer_enum == Map::num_layers;
+            }
+        };
+        MapInterface map_interface;
 
 
         ivec2 mouse_pos = ivec2(0);
@@ -1606,6 +1718,34 @@ namespace Objects
                     cam.pos = editor_cam_pos;
                 }
 
+                { // Switching modes
+                    if (Keys::e.pressed())
+                    {
+                        eraser_mode = !eraser_mode;
+                        map_interface.ReleaseGrab();
+                    }
+                }
+
+                { // Switching layers
+                    if (Keys::_1.pressed())
+                        map_interface.SelectLayer(Map::la_back);
+                    if (Keys::_2.pressed())
+                        map_interface.SelectLayer(Map::la_mid);
+                    if (Keys::_3.pressed())
+                        map_interface.SelectLayer(Map::la_front);
+                    if (Keys::_4.pressed())
+                        map_interface.SelectAllLayers();
+                }
+
+                { // Switching layer transparency
+                    if (Keys::z.pressed())
+                        other_layers_handling = OtherLayersHandling::hide;
+                    if (Keys::x.pressed())
+                        other_layers_handling = OtherLayersHandling::transparent;
+                    if (Keys::c.pressed())
+                        other_layers_handling = OtherLayersHandling::show;
+                }
+
                 // Selecting tiles
                 if (selecting_tiles)
                 {
@@ -1615,7 +1755,7 @@ namespace Objects
                     int button_index = selecting_tiles_selected_button_pos.y + selecting_tiles_buttons_per_screen.y * selecting_tiles_selected_button_pos.x;
 
                     if ((selecting_tiles_selected_button_pos < 0).any() || (selecting_tiles_selected_button_pos >= selecting_tiles_buttons_per_screen).any() ||
-                         button_index >= int(Map::tiling.TileIndicesForLayer(target_layer_enum).size()))
+                         button_index >= map_interface.AvailableTileCount())
                     {
                         selecting_tiles_button_selected = 0;
                         selecting_tiles_selected_button_pos = ivec2(-1);
@@ -1624,43 +1764,11 @@ namespace Objects
                     if (mouse.left.released() && selecting_tiles_button_selected)
                     {
                         selecting_tiles = 0;
-                        grab.Grab(Map::tiling.TileIndicesForLayer(target_layer_enum)[button_index]);
+                        map_interface.GrabTile(button_index);
                     }
                 }
                 else // Editing the map
                 {
-                    { // Switching modes
-                        if (Keys::e.pressed())
-                        {
-                            eraser_mode = !eraser_mode;
-                            grab.Release();
-                        }
-                    }
-
-                    { // Switching layers
-                        auto old_target_layer_enum = target_layer_enum;
-                        if (Keys::_1.pressed())
-                            target_layer_enum = Map::la_front;
-                        if (Keys::_2.pressed())
-                            target_layer_enum = Map::la_mid;
-                        if (Keys::_3.pressed())
-                            target_layer_enum = Map::la_back;
-                        if (old_target_layer_enum != target_layer_enum)
-                        {
-                            target_layer = Map::layer_list[target_layer_enum];
-                            grab.Release();
-                        }
-                    }
-
-                    { // Switching layer transparency
-                        if (Keys::z.pressed())
-                            other_layers_handling = OtherLayersHandling::hide;
-                        if (Keys::x.pressed())
-                            other_layers_handling = OtherLayersHandling::transparent;
-                        if (Keys::c.pressed())
-                            other_layers_handling = OtherLayersHandling::show;
-                    }
-
                     { // Starting resize
                         if (Keys::l_alt.down())
                         {
@@ -1698,7 +1806,7 @@ namespace Objects
                     }
 
                     // Selecting map region
-                    if (!grab.Grabbed() && mouse.right.pressed() && map_selection_map_hovered)
+                    if (!map_interface.Grabbed() && mouse.right.pressed() && map_selection_map_hovered)
                     {
                         map_selection_button_down = 1;
                         map_selection_start = clamp(mouse_pos, 0, map.Size()-1);
@@ -1719,43 +1827,28 @@ namespace Objects
                                   b = map_selection_end;
 
                             if (!eraser_mode)
-                            {
-                                grab.Grab(map, target_layer, a, b);
-                            }
+                                map_interface.GrabArea(map, a, b);
                             else
-                            {
-                                if (map_selection_multiple_tiles)
-                                {
-                                    if (a.x > b.x) std::swap(a.x, b.x);
-                                    if (a.y > b.y) std::swap(a.y, b.y);
-
-                                    for (int y = a.y; y <= b.y; y++)
-                                    for (int x = a.x; x <= b.x; x++)
-                                        map.Set(ivec2(x,y), target_layer, Map::no_tile);
-                                }
-                            }
+                                map_interface.EraseArea(map, a, b);
                         }
                     }
 
                     // Moving and placing grabbed tiles
-                    if (!eraser_mode && grab.Grabbed())
+                    if (!eraser_mode && map_interface.Grabbed())
                     {
-                        ivec2 base_offset_prev = grab.base_offset;
-                        grab.base_offset = div_ex(-grab.Size() * tile_size/2 + mouse.pos() + cam.pos + tile_size/2, tile_size);
+                        ivec2 grab_offset_prev = map_interface.grab_offset;
+                        map_interface.grab_offset = div_ex(-map_interface.GrabbedSize() * tile_size/2 + mouse.pos() + cam.pos + tile_size/2, tile_size);
 
-                        if (mouse.left.pressed() || (mouse.left.down() && grab.base_offset != base_offset_prev))
-                            grab.Paste(map, target_layer, grab.base_offset);
+                        if (mouse.left.pressed() || (mouse.left.down() && map_interface.grab_offset != grab_offset_prev))
+                            map_interface.PasteGrabbed(map, map_interface.grab_offset);
 
                         if (mouse.right.pressed())
-                            grab.Release();
+                            map_interface.ReleaseGrab();
                     }
 
                     // Erasing
-                    if (mouse.left.down() && !grab.Grabbed() && !map_selection_button_down && (mouse_pos_changed || mouse.left.pressed()) && map_selection_map_hovered)
-                    {
-                        map.Set(mouse_pos, target_layer, Map::no_tile);
-                        map.RunAutotiler(mouse_pos);
-                    }
+                    if (mouse.left.down() && !map_interface.Grabbed() && !map_selection_button_down && (mouse_pos_changed || mouse.left.pressed()) && map_selection_map_hovered)
+                        map_interface.EraseArea(map, mouse_pos, mouse_pos);
                 }
             }
         }
@@ -1778,8 +1871,8 @@ namespace Objects
                     mode_color = fvec3(1,0.2,0.2);
 
                 // Grabbed tiles
-                if (!selecting_tiles && grab.Grabbed())
-                    grab.Render(cam.pos);
+                if (!selecting_tiles && map_interface.Grabbed())
+                    map_interface.RenderGrabbed(cam.pos);
 
                 { // Map border
                     constexpr int width = 4;
@@ -1806,7 +1899,7 @@ namespace Objects
                 }
 
                 // Mouse cursor
-                if (!selecting_tiles && !grab.Grabbed() && !show_selection_rect)
+                if (!selecting_tiles && !map_interface.Grabbed() && !show_selection_rect)
                 {
                     constexpr int cursor_width = 4, cursor_length = 4, cursor_corner_size = 4, cursor_outline_size = 2;
 
@@ -1822,62 +1915,19 @@ namespace Objects
                     }
                 }
 
-                // Tile selector
-                if (selecting_tiles_alpha)
-                {
-                    constexpr int rect_margin = 2, rect_line_width = 1;
-
-                    // Dark background
-                    r.Quad(-screen_sz/2, screen_sz).color(fvec3(0)).alpha(0.5 * selecting_tiles_alpha);
-
-                    const auto &available_tiles = Map::tiling.TileIndicesForLayer(target_layer_enum);
-                    int count = available_tiles.size();
-
-                    // Buttons
-                    int button_index = 0;
-                    for (int x = 0; x < selecting_tiles_buttons_per_screen.x && button_index < count; x++)
-                    for (int y = 0; y < selecting_tiles_buttons_per_screen.y && button_index < count; y++)
-                    {
-                        int index = available_tiles[button_index];
-
-                        const auto &tile = Map::tiling.TileByIndex(index);
-                        const auto &variant = tile.DisplayVariant();
-
-                        ivec2 base = selecting_tiles_button_sz * ivec2(x,y) - screen_sz/2;
-                        ivec2 main_sprite_pos = (variant.texture - clamp(variant.offset, ivec2(0), variant.size-1)) * tile_size + Map::sheet_tex_pos;
-
-                        // Selection
-                        if (selecting_tiles_button_selected && ivec2(x,y) == selecting_tiles_selected_button_pos)
-                        {
-                            Draw::Rect(base + ivec2(rect_margin-1), selecting_tiles_button_sz - ivec2(2*(rect_margin-1)), rect_line_width, fvec3(0   ), selecting_tiles_alpha);
-                            Draw::Rect(base + ivec2(rect_margin  ), selecting_tiles_button_sz - ivec2(2* rect_margin   ), rect_line_width, fvec3(0.75), selecting_tiles_alpha);
-                        }
-
-                        // Block icon
-                        r.Quad(base + selecting_tiles_button_sz.y/2, ivec2(tile_size)).tex(main_sprite_pos).alpha(selecting_tiles_alpha).center();
-
-                        // Text
-                        r.Text(base + selecting_tiles_button_sz.y/2 + ivec2(selecting_tiles_button_text_offset,0), tile.name).preset(Draw::WithBlackOutline).align_h(-1).alpha(selecting_tiles_alpha).font(font_tiny);
-
-                        button_index++;
-                    }
-                }
-
-                // Text
-                if (!selecting_tiles)
-                {
+                { // Text
                     // Top left
                     std::string top_left = "Editing: tiles";
 
                     // Bottom left
                     ivec2 cam_pos = div_ex(cam.pos, tile_size),
-                          pos = (grab.Grabbed() ? grab.base_offset : mouse_pos);
+                          pos = (map_interface.Grabbed() ? map_interface.grab_offset : mouse_pos);
                     std::string bottom_left = Str("Map size: [", std::setw(5), map.Size().x, ",", std::setw(5), map.Size().y, "]",
                                                   "     Camera center: [", std::setw(5), cam_pos.x, ",", std::setw(5), cam_pos.y, "]",
                                                   "          Pos: [", std::setw(5), pos.x, ",", std::setw(5), pos.y, "]");
                     ivec2 size(0);
-                    if (grab.Grabbed())
-                        size = grab.Size();
+                    if (map_interface.Grabbed())
+                        size = map_interface.GrabbedSize();
                     else if (map_selection_button_down && map_selection_multiple_tiles)
                         size = abs(map_selection_end - map_selection_start) + 1;
                     if (size != ivec2(0))
@@ -1885,42 +1935,58 @@ namespace Objects
 
                     // Bottom right
                     std::string bottom_right;
-                    if (show_help)
                     {
-                        bottom_right = "WASD to move\n"
-                                       "(+SHIFT - slow, +CTRL - fast, +ALT - faster)\n"
-                                       "TAB to open tile sheet\n"
-                                       "LMB to draw or erase\n"
-                                       "RMB to select tiles\n"
-                                       "E to switch to eraser mode\n"
-                                       "1,2,3 to change layer\n"
-                                       "Z,X,C to change visiblity of other layers\n"
-                                       "ALT+<^>v to resize map\n"
-                                       "F5 to reload textures and tiling settings\n"
-                                       "SPACE to save\n"
-                                       "(+ALT to save/load in forward-compatible mode)\n"
-                                       "CTRL+F5 to reload resources\n"
-                                       "F12 to rerun autotiler\n"
-                                       "F1 to hide this text";
+                        if (show_help)
+                        {
+                            bottom_right = "WASD to move\n"
+                                           "(+SHIFT - slow, +CTRL - fast, +ALT - faster)\n"
+                                           "TAB to open tile sheet\n"
+                                           "LMB to draw or erase\n"
+                                           "RMB to select tiles\n"
+                                           "E to switch to eraser mode\n"
+                                           "1,2,3,4 to change layer\n"
+                                           "Z,X,C to change visiblity of other layers\n"
+                                           "ALT+<^>v to resize map\n"
+                                           "F5 to reload textures and tiling settings\n"
+                                           "SPACE to save\n"
+                                           "(+ALT to save/load in forward-compatible mode)\n"
+                                           "CTRL+F5 to reload resources\n"
+                                           "F12 to rerun autotiler\n"
+                                           "F1 to hide this text";
+                        }
+                        else
+                            bottom_right = "F1 to show help";
                     }
-                    else
-                        bottom_right = "F1 to show help";
 
                     // Top middle
                     std::string top_middle;
-                    if (!selecting_tiles && eraser_mode)
-                        top_middle = "Erasing";
+                    {
+                        if (!selecting_tiles && eraser_mode)
+                            top_middle = "Erasing";
+                    }
 
                     // Top right
-                    std::string top_right = Str("\r\4"[target_layer == Map::front], "Front\n",
-                                                "\r\4"[target_layer == Map::mid  ], "Middle\n",
-                                                "\r\4"[target_layer == Map::back ], "Back\n");
+                    std::string top_right;
+                    {
+                        char color;
+                        if (map_interface.AllLayersSelected())
+                            color = '\2';
+                        else
+                            color = '\4';
+
+                        top_right = Str((map_interface.LayerSelected(Map::back ) ? color : '\r'), "Back\n",
+                                        (map_interface.LayerSelected(Map::mid  ) ? color : '\r'), "Middle\n",
+                                        (map_interface.LayerSelected(Map::front) ? color : '\r'), "Front\n");
+                    }
 
                     // Top right 2
-                    std::string top_right_2 = Str("\1Other layers:\n\n",
-                                                  "\r\5"[other_layers_handling == OtherLayersHandling::hide       ], "Hidden\n",
-                                                  "\r\5"[other_layers_handling == OtherLayersHandling::transparent], "Transparent\n",
-                                                  "\r\5"[other_layers_handling == OtherLayersHandling::show       ], "Shown\n");
+                    std::string top_right_2;
+                    {
+                        top_right_2 = Str("\1Other layers:\n\n",
+                                          "\r\5"[other_layers_handling == OtherLayersHandling::hide       ], "Hidden\n",
+                                          "\r\5"[other_layers_handling == OtherLayersHandling::transparent], "Transparent\n",
+                                          "\r\5"[other_layers_handling == OtherLayersHandling::show       ], "Shown\n");
+                    }
 
                     // Render
                     r.Text(-screen_sz/2 + 2                   , top_left     ).preset(Draw::WithBlackOutline).font(font_tiny).align({-1,-1});
@@ -1929,6 +1995,44 @@ namespace Objects
                     r.Text(ivec2(0,-screen_sz.y/2+20)         , top_middle   ).preset(Draw::WithBlackOutline).align({0,0}).color(mode_color);
                     r.Text((screen_sz/2-2).mul_y(-1)          , top_right    ).preset(Draw::WithColors()).preset(Draw::WithBlackOutline).align({1,-1});
                     r.Text((screen_sz/2-2).mul_y(-1).add_y(72), top_right_2  ).preset(Draw::WithColors()).preset(Draw::WithBlackOutline).font(font_tiny).align({1,-1});
+                }
+
+                // Tile selector
+                if (selecting_tiles_alpha)
+                {
+                    constexpr int rect_margin = 2, rect_line_width = 1;
+
+                    // Dark background
+                    r.Quad(-screen_sz/2, screen_sz).color(fvec3(0)).alpha(0.8 * selecting_tiles_alpha);
+
+                    int count = map_interface.AvailableTileCount();
+
+                    // Buttons
+                    int button_index = 0;
+                    for (int x = 0; x < selecting_tiles_buttons_per_screen.x && button_index < count; x++)
+                    for (int y = 0; y < selecting_tiles_buttons_per_screen.y && button_index < count; y++)
+                    {
+                        ivec2 base = selecting_tiles_button_sz * ivec2(x,y) - screen_sz/2;
+                        int tile_index = map_interface.AvailableTileIndex(button_index);
+
+                        // Selection
+                        if (selecting_tiles_button_selected && ivec2(x,y) == selecting_tiles_selected_button_pos)
+                        {
+                            int extra_width = mouse.left.down();
+                            Draw::Rect(base + ivec2(rect_margin - 1 + extra_width), selecting_tiles_button_sz - ivec2(2*(rect_margin - 1 + extra_width)), rect_line_width              , fvec3(0   ), selecting_tiles_alpha);
+                            Draw::Rect(base + ivec2(rect_margin     + extra_width), selecting_tiles_button_sz - ivec2(2*(rect_margin     + extra_width)), rect_line_width + extra_width, fvec3(0.75), selecting_tiles_alpha);
+                        }
+
+                        // Block icon
+                        // (We intentionally draw only a single tile, even if the tile texture is larger.)
+                        r.Quad(base + selecting_tiles_button_sz.y/2, ivec2(tile_size)).tex(Map::tiling.DefaultVariant(tile_index).texture * tile_size + Map::sheet_tex_pos).alpha(selecting_tiles_alpha).center();
+
+                        // Text
+                        r.Text(base + selecting_tiles_button_sz.y/2 + ivec2(selecting_tiles_button_text_offset,0), Map::tiling.TileByIndex(tile_index).name)
+                         .preset(Draw::WithBlackOutline).align_h(-1).alpha(selecting_tiles_alpha).font(font_tiny);
+
+                        button_index++;
+                    }
                 }
             }
 
@@ -1964,11 +2068,11 @@ namespace Objects
 
         bool ShouldShowLayer(Map::layer_mem_ptr_t layer)
         {
-            return other_layers_handling != OtherLayersHandling::hide || layer == target_layer;
+            return other_layers_handling != OtherLayersHandling::hide || map_interface.LayerSelected(layer);
         }
         bool ShouldMakeLayerTransparent(Map::layer_mem_ptr_t layer)
         {
-            return other_layers_handling == OtherLayersHandling::transparent && layer != target_layer;
+            return other_layers_handling == OtherLayersHandling::transparent && !map_interface.LayerSelected(layer);
         }
     };
 
@@ -1990,6 +2094,7 @@ namespace Objects
             map.Render(scene, layer, transparent);
         }
     };
+
 
     class TestObject
     {
