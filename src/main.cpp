@@ -2,6 +2,7 @@
 
 #include <bitset>
 #include <iostream>
+#include <list>
 #include <numeric>
 
 constexpr ivec2 screen_sz = ivec2(1920,1080)/3;
@@ -2092,6 +2093,105 @@ namespace Objects
             if (!visible)
                 return;
             map.Render(scene, layer, transparent);
+        }
+    };
+
+
+    class EntityController
+    {
+      public:
+        class Entity;
+
+        using entity_smart_ptr_t = std::shared_ptr<Entity>;
+        using entity_list_t = std::list<entity_smart_ptr_t>;
+        using entity_iterator_t = entity_list_t::iterator;
+
+        class Interface
+        {
+            EntityController &controller;
+
+            // Initially this is the iterator to the next entity. If you insert any entities, it will point to the last one of them.
+            const entity_iterator_t &iterator;
+
+          public:
+            Interface(EntityController *controller_ptr, const entity_iterator_t *iterator_ptr) : controller(*controller_ptr), iterator(*iterator_ptr) {}
+
+            void Insert(entity_smart_ptr_t ptr)
+            {
+                controller.entity_list.insert(iterator, std::move(ptr));
+            }
+        };
+
+        class Entity
+        {
+            friend class EntityController;
+          public:
+            static constexpr int units_per_pixel = 16;
+
+          private:
+            bool delete_this = 0;
+
+          protected:
+            ivec2 pos = ivec2(std::numeric_limits<int>::min() / -2); // Measured in units.
+
+          public:
+            virtual void Tick(Interface) = 0;
+            virtual void Render() const = 0;
+            virtual ~Entity() {}
+
+            ivec2 PixelPos() const
+            {
+                ivec2 tmp = pos;
+
+                for (auto coord : {&ivec2::x, &ivec2::y})
+                {
+                    if (tmp.*coord < 0) tmp.*coord -= units_per_pixel/2+1;
+                    else tmp.*coord += units_per_pixel/2;
+                }
+
+                return tmp / units_per_pixel;
+            }
+            void DeleteThis()
+            {
+                delete_this = 1;
+            }
+        };
+
+      private:
+        entity_list_t entity_list;
+
+      public:
+        void AddEntity(std::shared_ptr<Entity> entity)
+        {
+            entity_list.push_back(std::move(entity));
+        }
+
+        void Tick()
+        {
+            auto it = entity_list.begin();
+            while (1)
+            {
+                auto next = std::next(it);
+                (*it)->Tick({this, &next});
+                if (next == entity_list.end())
+                    break;
+                it = next;
+            }
+
+            it = entity_list.begin();
+            while (it != entity_list.end())
+            {
+                if ((*it)->delete_this)
+                    it = entity_list.erase(it);
+                else
+                    it++;
+            }
+        }
+
+        void Render()
+        {
+            for (const auto &it : entity_list)
+                it->Render();
         }
     };
 
