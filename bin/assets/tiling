@@ -1,4 +1,5 @@
 {
+	flags = ["solid"],
 	groups = [
 		{name = "metal merge", tiles = ["metal wall", "blue wall"]},
 	],
@@ -43,6 +44,7 @@
 		},
 		{	
 			name = "metal wall",
+			flags = ["solid"],
 			layer = la_mid,
 			va_default = "corner",
 			va_display = "corner",

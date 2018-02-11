@@ -4,6 +4,7 @@
 #include <iostream>
 #include <list>
 #include <numeric>
+#include <set>
 
 constexpr ivec2 screen_sz = ivec2(1920,1080)/3;
 constexpr int tile_size = 12;
@@ -394,7 +395,7 @@ namespace Objects
                 ))
                 ReflectStruct(ModuloPosition, (
                     (ivec2)(size),
-                    (std::unordered_set<ivec2>)(offsets),
+                    (std::set<ivec2>)(offsets),
                     (bool apply = 0;),
                 ))
 
@@ -488,15 +489,23 @@ namespace Objects
                 Reflect(Tile)
                 (
                     (std::string)(name),
+                    (std::set<std::string>)(flags)(={}),
                     (LayerEnum)(layer),
                     (std::string)(va_default,va_display),
                     (std::vector<TileVariant>)(variants),
                     (std::vector<TileRule>)(rules),
                 )
 
+                std::vector<char> flag_array; // `char` is used instead of `bool` because I don't want packing.
+
                 int original_index;
                 int va_default_index, va_display_index;
 
+
+                bool HasFlag(int flag_index) const
+                {
+                    return flag_array[flag_index];
+                }
 
                 int VariantIndex(std::string variant_name) // This is not const to prevent calling it from outside.
                 {
@@ -617,6 +626,7 @@ namespace Objects
             {
                 Reflect(Data)
                 (
+                    (std::vector<std::string>)(flags),
                     (std::vector<Group>)(groups),
                     (std::vector<Tile>)(tiles),
                 )
@@ -647,6 +657,14 @@ namespace Objects
                     return std::binary_search(tiles.begin(), tiles.end(), name);
                 }
 
+                // Those return -1 if there is no such object.
+                int TileFlagIndex(std::string name) const
+                {
+                    auto it = std::lower_bound(flags.begin(), flags.end(), name);
+                    if (it == flags.end() || *it != name)
+                        return -1;
+                    return it - flags.begin();
+                }
                 int GroupIndex(std::string name) const
                 {
                     auto it = std::lower_bound(groups.begin(), groups.end(), name);
@@ -664,6 +682,14 @@ namespace Objects
 
                 void Finalize()
                 {
+                    { // Tile flags
+                        // Sort
+                        std::sort(flags.begin(), flags.end());
+                        // Check for duplicates
+                        if (auto it = std::adjacent_find(flags.begin(), flags.end()); it != flags.end())
+                            throw std::runtime_error(Str("A duplicate tile flag name `", *it, "`."));
+                    }
+
                     { // Groups
                         // Finalize
                         for (auto &it : groups)
@@ -689,6 +715,20 @@ namespace Objects
                         for (const auto &it : tiles)
                             if (GroupExists(it.name))
                                 throw std::runtime_error(Str("A name collision between a tile named `", it.name, "` and a group with the same name."));
+
+                        // Handle flags
+                        for (auto &it : tiles)
+                        {
+                            it.flag_array.resize(flags.size()); // This fills the vector with zeroes.
+
+                            for (const auto &flag : it.flags)
+                            {
+                                int flag_index = TileFlagIndex(flag);
+                                if (flag_index == 1)
+                                    throw std::runtime_error(Str("An invalid flag named `", flag, "` was specified for tile `", it.name, "`."));
+                                it.flag_array[flag_index] = 1;
+                            }
+                        }
                     }
 
                     { // Get tile indices for groups
@@ -846,6 +886,14 @@ namespace Objects
                 return 1;
             }
 
+            int FlagIndex(std::string name) const // This fails with a error if such flag doesn't exist.
+            {
+                auto it = std::lower_bound(data.flags.begin(), data.flags.end(), name);
+                if (it == data.flags.end() || *it != name)
+                    Program::Error(Str("Attempt to access non-existent tile flag `", name, "`."));
+                return it - data.flags.begin();
+            }
+
             int GetTileIndex(tile_id_t id) const
             {
                 auto it = data.tile_info.find(id);
@@ -921,6 +969,7 @@ namespace Objects
             }
         };
         inline static Tiling tiling{"assets/tiling"};
+        inline static int flag_solid = tiling.FlagIndex("solid");
 
       private:
         std::string file_name;
@@ -2093,105 +2142,6 @@ namespace Objects
             if (!visible)
                 return;
             map.Render(scene, layer, transparent);
-        }
-    };
-
-
-    class EntityController
-    {
-      public:
-        class Entity;
-
-        using entity_smart_ptr_t = std::shared_ptr<Entity>;
-        using entity_list_t = std::list<entity_smart_ptr_t>;
-        using entity_iterator_t = entity_list_t::iterator;
-
-        class Interface
-        {
-            EntityController &controller;
-
-            // Initially this is the iterator to the next entity. If you insert any entities, it will point to the last one of them.
-            const entity_iterator_t &iterator;
-
-          public:
-            Interface(EntityController *controller_ptr, const entity_iterator_t *iterator_ptr) : controller(*controller_ptr), iterator(*iterator_ptr) {}
-
-            void Insert(entity_smart_ptr_t ptr)
-            {
-                controller.entity_list.insert(iterator, std::move(ptr));
-            }
-        };
-
-        class Entity
-        {
-            friend class EntityController;
-          public:
-            static constexpr int units_per_pixel = 16;
-
-          private:
-            bool delete_this = 0;
-
-          protected:
-            ivec2 pos = ivec2(std::numeric_limits<int>::min() / -2); // Measured in units.
-
-          public:
-            virtual void Tick(Interface) = 0;
-            virtual void Render() const = 0;
-            virtual ~Entity() {}
-
-            ivec2 PixelPos() const
-            {
-                ivec2 tmp = pos;
-
-                for (auto coord : {&ivec2::x, &ivec2::y})
-                {
-                    if (tmp.*coord < 0) tmp.*coord -= units_per_pixel/2+1;
-                    else tmp.*coord += units_per_pixel/2;
-                }
-
-                return tmp / units_per_pixel;
-            }
-            void DeleteThis()
-            {
-                delete_this = 1;
-            }
-        };
-
-      private:
-        entity_list_t entity_list;
-
-      public:
-        void AddEntity(std::shared_ptr<Entity> entity)
-        {
-            entity_list.push_back(std::move(entity));
-        }
-
-        void Tick()
-        {
-            auto it = entity_list.begin();
-            while (1)
-            {
-                auto next = std::next(it);
-                (*it)->Tick({this, &next});
-                if (next == entity_list.end())
-                    break;
-                it = next;
-            }
-
-            it = entity_list.begin();
-            while (it != entity_list.end())
-            {
-                if ((*it)->delete_this)
-                    it = entity_list.erase(it);
-                else
-                    it++;
-            }
-        }
-
-        void Render()
-        {
-            for (const auto &it : entity_list)
-                it->Render();
         }
     };
 
