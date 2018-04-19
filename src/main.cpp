@@ -9,7 +9,7 @@
 constexpr ivec2 screen_sz = ivec2(1920,1080)/3;
 constexpr int tile_size = 12;
 
-Events::AutoErrorHandles error_handlers;
+Events::AutoErrorHandlers error_handlers;
 
 Window win("Meow", screen_sz * 2, Window::Settings{}.MinSize(screen_sz).Resizable());
 Timing::TickStabilizer tick_stabilizer(60);

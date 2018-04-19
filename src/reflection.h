@@ -333,7 +333,7 @@ namespace Reflection
 
         // Default interface functions
 
-        inline constexpr std::size_t reflection_interface_field_count(/*unused*/ const void *) {return 0;}
+        inline constexpr std::size_t reflection_interface_field_count(/*unused*/ const void *) noexcept {return -1;}
 
         // This should return a reference to the field.
         template <std::size_t I> void reflection_interface_field(void *, index_const<I>) = delete;
@@ -651,9 +651,9 @@ namespace Reflection
             ~Interface() = delete;
           public:
 
-            template <typename T> static constexpr bool is_structure() {return field_count<T>() > 0;}
+            template <typename T> static constexpr bool is_structure() {return reflection_interface_field_count((const T *)0) != std::size_t(-1);}
 
-            template <typename T> static constexpr std::size_t field_count() {return reflection_interface_field_count((const T *)0);}
+            template <typename T> static constexpr std::size_t field_count() {return is_structure<T>() ? reflection_interface_field_count((const T *)0) : 0;}
 
             template <std::size_t I, typename T> static       auto &field(      T &obj) {return reflection_interface_field(&obj, index_const<I>{});}
             template <std::size_t I, typename T> static const auto &field(const T &obj) {return (const std::remove_reference_t<decltype(field<I>((T &)obj))> &)field<I>((T &)obj);}
@@ -977,7 +977,11 @@ namespace Reflection
         }
         template <typename T> const char *from_string_field(std::size_t index, T &object, const char *str, bool verbose_errors, Error &error, std::string &error_details, std::vector<const char *> &stack)
         {
-            return from_string_func_ptr_array<T>(std::make_index_sequence<Interface::field_count<T>()>{})[index](object, str, verbose_errors, error, error_details, stack);
+            (void)index; (void)object; (void)str; (void)verbose_errors; (void)error; (void)error_details; (void)stack;
+            if constexpr (Interface::field_count<T>() > 0)
+                return from_string_func_ptr_array<T>(std::make_index_sequence<Interface::field_count<T>()>{})[index](object, str, verbose_errors, error, error_details, stack);
+            else
+                return 0;
         }
 
         template <typename T, std::size_t ...I> const auto &field_name_to_index_map(std::index_sequence<I...>)
@@ -1002,7 +1006,11 @@ namespace Reflection
         }
         template <typename T> constexpr const char *field_index_to_name(std::size_t index)
         {
-            return field_index_to_name_array<T>(std::make_index_sequence<Interface::field_count<T>()>{})[index];
+            (void)index;
+            if constexpr (Interface::field_count<T>() > 0)
+                return field_index_to_name_array<T>(std::make_index_sequence<Interface::field_count<T>()>{})[index];
+            else
+                return "";
         }
 
         // `stack` records field names. For container elements, it will have a null followed by (index + 1).
@@ -1075,7 +1083,7 @@ namespace Reflection
                         return 0;
                     }
 
-                    bool assigned_fields[Interface::field_count<T>()] {};
+                    bool assigned_fields[Interface::field_count<T>() > 0 ? Interface::field_count<T>() : 1] {};
                     bool first = 1;
 
                     while (1)

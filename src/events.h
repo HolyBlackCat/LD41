@@ -38,9 +38,9 @@ namespace Events
 
     void SetErrorHandlers();
 
-    struct AutoErrorHandles // This can be used as a global variable type to set the handlers early.
+    struct AutoErrorHandlers // This can be used as a global variable type to set the handlers early.
     {
-        AutoErrorHandles() {SetErrorHandlers();}
+        AutoErrorHandlers() {SetErrorHandlers();}
     };
 }
 
