@@ -3,8 +3,10 @@
 #include <bitset>
 #include <iostream>
 #include <list>
+#include <map>
 #include <numeric>
 #include <set>
+#include <unordered_map>
 
 constexpr ivec2 screen_sz = ivec2(1920,1080)/3;
 constexpr int tile_size = 12;
@@ -250,7 +252,7 @@ namespace Objects
     class Map
     {
       public:
-        static constexpr uint32_t version_magic = 3; // This should be changed when map binary structure changes.
+        static constexpr uint32_t version_magic = 5; // This should be changed when map binary structure changes.
 
         static constexpr ivec2 sheet_size = ivec2(32), sheet_tex_pos = ivec2(0,512);
 
@@ -258,8 +260,8 @@ namespace Objects
         enum SafetyMode {Safe, Unsafe};
 
 
-        using tile_id_t = u8vec2;
-        inline static constexpr tile_id_t no_tile = u8vec2(-1);
+        using tile_id_t = int;
+        inline static constexpr tile_id_t no_tile = tile_id_t(-1);
 
         ReflectStruct(Tile, (
             (tile_id_t)(front,mid,back)(=no_tile),
@@ -328,11 +330,13 @@ namespace Objects
                 Reflect(TileVariant)
                 (
                     (std::string)(name),
-                    (ivec2)(texture), // Effectively this is the tile id, `tile_id_t`.
+                    (ivec2)(texture),
                     (ivec2)(size)(=ivec2(1)),
                     (ivec2)(offset)(=ivec2(0)),
                     (ivec2)(tex_offset)(=ivec2(0)),
                 )
+
+                int global_index;
 
               private:
                 bool small;
@@ -637,9 +641,13 @@ namespace Objects
                 {
                     int tile_index;
                     int variant_index;
-                    bool part_of_multitile_image;
+                    std::string tile_name;
+                    std::string variant_name;
                 };
-                std::unordered_map<tile_id_t, TileInfo> tile_info;
+                std::map<tile_id_t, TileInfo> tile_info;
+
+                std::map<std::string, std::map<std::string, tile_id_t>> indices_by_name;
+                tile_id_t global_index_count;
 
                 ivec2 autotiling_range;
 
@@ -746,32 +754,29 @@ namespace Objects
                         }
                     }
 
-                    { // Map texture coordinates to tile information
+                    { // Generate tile IDs
+                        tile_id_t index = 0;
+
                         for (std::size_t tile_index = 0; tile_index < tiles.size(); tile_index++)
                         {
-                            const auto &tile = tiles[tile_index];
+                            auto &tile = tiles[tile_index];
 
                             for (std::size_t variant_index = 0; variant_index < tile.variants.size(); variant_index++)
                             {
-                                const auto &variant = tile.variants[variant_index];
+                                auto &variant = tile.variants[variant_index];
+                                variant.global_index = index++;
+                                indices_by_name[tile.name][variant.name] = variant.global_index;
 
-                                for (int y = 0; y < variant.size.y; y++)
-                                for (int x = 0; x < variant.size.x; x++)
-                                {
-                                    ivec2 sheet_pos = ivec2(x,y) + variant.texture;
-
-                                    TileInfo info;
-                                    info.tile_index = tile_index;
-                                    info.variant_index = variant_index;
-                                    info.part_of_multitile_image = ivec2(x,y).any();
-
-                                    auto [it, ok] = tile_info.insert({sheet_pos, info});
-                                    if (!ok)
-                                        throw std::runtime_error(Str("Tile at position ", sheet_pos, " in the sheet is refenced twice: in variant `", variant.name, "` of tile `", tile.name, "` and "
-                                                           "in variant `", tiles[it->second.tile_index].variants[it->second.variant_index].name, "` of tile `", tiles[it->second.tile_index].name, "`."));
-                                }
+                                TileInfo info;
+                                info.tile_index = tile_index;
+                                info.variant_index = variant_index;
+                                info.tile_name = tile.name;
+                                info.variant_name = variant.name;
+                                tile_info.insert(std::make_pair(variant.global_index, info));
                             }
                         }
+
+                        global_index_count = index;
                     }
 
                     { // Get max texture offsets
@@ -878,14 +883,6 @@ namespace Objects
                 }
             }
 
-            bool TileExists(tile_id_t id) const
-            {
-                auto it = data.tile_info.find(id);
-                if (it == data.tile_info.end() || it->second.part_of_multitile_image)
-                    return 0;
-                return 1;
-            }
-
             int FlagIndex(std::string name) const // This fails with a error if such flag doesn't exist.
             {
                 auto it = std::lower_bound(data.flags.begin(), data.flags.end(), name);
@@ -894,33 +891,47 @@ namespace Objects
                 return it - data.flags.begin();
             }
 
+            int IndexCount() const // Valid tile_id_t values are: 0 <= x < IndexCount().
+            {
+                return data.global_index_count;
+            }
+            tile_id_t IndexByName(std::string tile_name, std::string variant_name) const // Returns -1 if no such tile or variant.
+            {
+                auto tile_it = data.indices_by_name.find(tile_name);
+                if (tile_it == data.indices_by_name.end())
+                    return -1;
+                auto variant_it = tile_it->second.find(variant_name);
+                if (variant_it == tile_it->second.end())
+                    return -1;
+                return variant_it->second;
+            }
             int GetTileIndex(tile_id_t id) const
             {
                 auto it = data.tile_info.find(id);
-                if (it == data.tile_info.end() || it->second.part_of_multitile_image)
-                    Program::Error(Str("Attempt to get tile variant for id ", ivec2(id), " which doesn't exist."));
+                if (it == data.tile_info.end())
+                    Program::Error(Str("Attempt to get tile index for id ", ivec2(id), " which doesn't exist."));
                 return it->second.tile_index;
             }
             int GetVariantIndex(tile_id_t id) const
             {
                 auto it = data.tile_info.find(id);
-                if (it == data.tile_info.end() || it->second.part_of_multitile_image)
-                    Program::Error(Str("Attempt to get tile variant for id ", ivec2(id), " which doesn't exist."));
+                if (it == data.tile_info.end())
+                    Program::Error(Str("Attempt to get tile variant index for id ", ivec2(id), " which doesn't exist."));
                 return it->second.variant_index;
             }
 
             const Tile &GetTile(tile_id_t id) const
             {
                 auto it = data.tile_info.find(id);
-                if (it == data.tile_info.end() || it->second.part_of_multitile_image)
-                    Program::Error(Str("Attempt to get tile information for id ", ivec2(id), " which doesn't exist."));
+                if (it == data.tile_info.end())
+                    Program::Error(Str("Attempt to get tile for id ", ivec2(id), " which doesn't exist."));
                 return data.tiles[it->second.tile_index];
             }
             const TileVariant &GetVariant(tile_id_t id) const
             {
                 auto it = data.tile_info.find(id);
-                if (it == data.tile_info.end() || it->second.part_of_multitile_image)
-                    Program::Error(Str("Attempt to get tile information for id ", ivec2(id), " which doesn't exist."));
+                if (it == data.tile_info.end())
+                    Program::Error(Str("Attempt to get tile variant for id ", ivec2(id), " which doesn't exist."));
                 return data.tiles[it->second.tile_index].variants[it->second.variant_index];
             }
 
@@ -929,7 +940,7 @@ namespace Objects
                 return data.tiles[tile_index].rules;
             }
 
-            // To make sure all the large tile textures get into your camera, increare rendered tile range by those values (add them to top-left and bottom-right corners respectively).
+            // To make sure all the large tile textures get into your camera, increase rendered tile range by those values (add them to top-left and bottom-right corners respectively).
             ivec2 MaxTextureOffsetNegative() const
             {
                 return data.max_texture_offset_negative;
@@ -1012,6 +1023,12 @@ namespace Objects
         };
 
         Data data;
+
+        ReflectStruct(ReflectedData, (
+            (ivec2)(size),
+            (std::vector<std::string>)(tile_names, variant_names),
+            (std::vector<int>[layer_count])(layers),
+        ))
 
       public:
         Map() {}
@@ -1254,7 +1271,7 @@ namespace Objects
                     }
                 }
 
-                Set(pos, mem_ptr, tile.variants[new_variant_index].texture);
+                Set(pos, mem_ptr, tile.variants[new_variant_index].global_index);
             }
         }
         void RunAutotiler(ivec2 pos, ivec2 size = ivec2(1)) // Runs autotiler for each tile in the specified rectange, expanded in every direction by `tiling.AutotilingRange()`.
@@ -1282,17 +1299,33 @@ namespace Objects
 
         bool SaveToFile(bool forward_compat = 0, std::string suffix = "") const
         {
+            ReflectedData refl;
+            refl.size = data.size;
+            for (tile_id_t tile_id = 0; tile_id < tiling.IndexCount(); tile_id++)
+            {
+                refl.tile_names.push_back(tiling.GetTile(tile_id).name);
+                refl.variant_names.push_back(tiling.GetVariant(tile_id).name);
+            }
+            for (int la = 0; la < layer_count; la++)
+            {
+                auto &layer = refl.layers[la];
+                layer.reserve(data.size.product());
+                for (int y = 0; y < data.size.y; y++)
+                for (int x = 0; x < data.size.x; x++)
+                    layer.push_back(data.tiles[x + data.size.x * y].*layer_list[la]);
+            }
+
             if (forward_compat)
             {
-                std::string str = Reflection::to_string(data);
+                std::string str = Reflection::to_string(refl);
                 return Utils::WriteToFile(file_name + ".fwdcompat" + suffix, (uint8_t *)str.data(), str.size());
             }
             else
             {
-                auto len = sizeof(uint32_t) + Reflection::byte_buffer_size(data);
+                auto len = sizeof(uint32_t) + Reflection::byte_buffer_size(refl);
                 auto buf = std::make_unique<uint8_t[]>(len);
                 uint8_t *ptr = Reflection::to_bytes<uint32_t>(version_magic, buf.get());
-                ptr = Reflection::to_bytes(data, ptr);
+                ptr = Reflection::to_bytes(refl, ptr);
                 if (ptr != buf.get() + len)
                     return 0;
                 return Utils::WriteToFile(file_name + suffix, buf.get(), len, Utils::compressed);
@@ -1313,12 +1346,12 @@ namespace Objects
                 return 0;
             }
 
-            auto data_copy = data;
+            ReflectedData refl;
+
             bool ok;
             if (forward_compat)
             {
-                data = {};
-                ok = Reflection::from_string(data, (char *)file.Data()); // `MemoryFile::Data()` is null-terminated, so we're fine.
+                ok = Reflection::from_string(refl, (char *)file.Data()); // `MemoryFile::Data()` is null-terminated, so we're fine.
             }
             else
             {
@@ -1328,48 +1361,44 @@ namespace Objects
                 begin = Reflection::from_bytes<uint32_t>(magic, begin, end);
                 if (begin && magic == version_magic)
                 {
-                    begin = Reflection::from_bytes(data, begin, end);
+                    begin = Reflection::from_bytes(refl, begin, end);
                     if (begin == end)
                         ok = 1;
                 }
             }
 
             if (!ok)
-            {
-                data = data_copy;
                 return 0;
+
+            if (refl.tile_names.size() != refl.variant_names.size())
+                return 0;
+
+            int indices_in_file = refl.tile_names.size();
+
+            Data new_data; // There is no real need in operating on a copy for now, but we still do it.
+            new_data.size = refl.size;
+            new_data.tiles.resize(new_data.size.product());
+            std::vector<tile_id_t> mapping;
+            mapping.reserve(indices_in_file);
+            for (int index = 0; index < indices_in_file; index++)
+                mapping.push_back(tiling.IndexByName(refl.tile_names[index], refl.variant_names[index]));
+
+            for (int la = 0; la < layer_count; la++)
+            for (int y = 0; y < new_data.size.y; y++)
+            for (int x = 0; x < new_data.size.x; x++)
+            {
+                int flat_xy = x + new_data.size.x * y;
+                int old_index = refl.layers[la][flat_xy], new_index;
+                if (old_index < 0 || old_index >= int(mapping.size()))
+                    new_index = -1;
+                else
+                    new_index = mapping[old_index];
+                new_data.tiles[flat_xy].*layer_list[la] = new_index;
             }
 
-            Validate();
+            data = std::move(new_data);
 
             return 1;
-        }
-
-        void Validate()
-        {
-            bool ok = 1;
-            for (auto &tile : data.tiles)
-            {
-                for (auto layer : layer_list)
-                {
-                    auto &id = tile.*layer;
-
-                    if (id == no_tile)
-                        continue;
-
-                    if (!tiling.TileExists(id))
-                    {
-                        if (ok == 1)
-                        {
-                            SaveToFile(0, ".before_removing_invalid_tiles");
-                        }
-                        ok = 0;
-                        id = no_tile;
-                    }
-                }
-            }
-            if (ok == 0)
-                UI::MessageBox("Warning", Str("Several invalid tiles were removed from `", file_name, "`.\nThe backup of the initial state of the map was made."));
         }
     };
 
@@ -1449,7 +1478,7 @@ namespace Objects
 
                 GrabbedLayer new_grabbed_layer;
                 new_grabbed_layer.layer = Map::layer_list[Map::tiling.TileByIndex(tile_index).layer];
-                new_grabbed_layer.tiles = {Map::tiling.DefaultVariant(tile_index).texture};
+                new_grabbed_layer.tiles = {Map::tiling.DefaultVariant(tile_index).global_index};
 
                 grabbed_layers.push_back(new_grabbed_layer);
             }
@@ -1473,7 +1502,7 @@ namespace Objects
                     {
                         Map::tile_id_t tile_id = map.Get(ivec2(x,y) + a, layer);
                         if (tile_id != Map::no_tile)
-                            tile_id = Map::tiling.DefaultVariant(Map::tiling.GetTileIndex(tile_id)).texture;
+                            tile_id = Map::tiling.DefaultVariant(Map::tiling.GetTileIndex(tile_id)).global_index;
                         new_grabbed_layer.tiles[x + y * grabbed_size.x] = tile_id;
                     }
 
@@ -1715,8 +1744,9 @@ namespace Objects
                 if (Keys::f5.pressed())
                 {
                     Draw::ReloadTextures();
+                    SaveMap(scene);
                     Map::tiling.Reload();
-                    map.Validate();
+                    LoadMap(scene);
                 }
             }
 
@@ -2000,7 +2030,7 @@ namespace Objects
                                            "F5 to reload textures and tiling settings\n"
                                            "SPACE to save\n"
                                            "(+ALT to save/load in forward-compatible mode)\n"
-                                           "CTRL+F5 to reload resources\n"
+                                           "CTRL+F5 to reload\n"
                                            "F12 to rerun autotiler\n"
                                            "F1 to hide this text";
                         }
