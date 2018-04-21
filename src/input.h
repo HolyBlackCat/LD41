@@ -45,6 +45,48 @@ namespace Input
         [[nodiscard]] bool repeated() const {update(); return state_repeated;}
         [[nodiscard]] bool down    () const {update(); return state_down;}
         [[nodiscard]] bool up      () const {update(); return !state_down;}
+
+        [[nodiscard]] std::string name() const
+        {
+            std::string ret;
+            for (const auto &obj : objects)
+            {
+                if (ret.size())
+                    ret += " or ";
+                switch (obj.device_type)
+                {
+                  case DeviceType::no_device:
+                    break;
+                  case DeviceType::mouse:
+                    switch (obj.index)
+                    {
+                      case 1:
+                        ret += "LMB";
+                        break;
+                      case 2:
+                        ret += "MMB";
+                        break;
+                      case 3:
+                        ret += "RMB";
+                        break;
+                      case 4:
+                        ret += "X1";
+                        break;
+                      case 5:
+                        ret += "X1";
+                        break;
+                      default:
+                        ret += "MB" + std::to_string(obj.index);
+                        break;
+                    }
+                    break;
+                  case DeviceType::keyboard:
+                    ret += SDL_GetScancodeName((SDL_Scancode)obj.index);
+                    break;
+                }
+            }
+            return ret;
+        }
     };
 
     class Mouse

@@ -17,7 +17,7 @@
 class Map
 {
   public:
-    static constexpr int tile_size = 12;
+    static constexpr int tile_size = 16;
 
     static constexpr uint32_t version_magic = 5; // This should be changed when map binary structure changes.
 
@@ -232,6 +232,7 @@ class Map
         void Reload(bool fatal_errors = 0);
 
         int FlagIndex(std::string name) const; // This fails with a error if such flag doesn't exist.
+        int TileIndex(std::string name) const; // This fails with a error if such tile doesn't exist.
 
         int IndexCount() const; // Valid tile_id_t values are: 0 <= x < IndexCount().
 
@@ -262,6 +263,10 @@ class Map
     };
     inline static Tiling tiling{"assets/tiling"};
     inline static int flag_solid = tiling.FlagIndex("solid");
+    inline static int flag_invisible = tiling.FlagIndex("invisible");
+    inline static int flag_kills = tiling.FlagIndex("kills");
+    inline static int flag_changes_map = tiling.FlagIndex("changes map");
+    inline static int flag_destructable = tiling.FlagIndex("destructable");
 
   private:
     std::string file_name;
@@ -312,7 +317,7 @@ class Map
     ))
 
   public:
-    Map() {}
+    Map() {data.size = ivec2(0);}
     Map(std::string file_name) : file_name(file_name)
     {
         // Trying to load the map from binary
@@ -404,6 +409,9 @@ class Map
                 if (id == no_tile)
                     continue;
 
+                if (tiling.GetTile(id).HasFlag(flag_invisible))
+                    continue;
+
                 const auto &variant = tiling.GetVariant(id);
 
                 if (variant.Small() != small_tiles)
@@ -438,6 +446,17 @@ class Map
         {
             tile_id_t tile_id = tile.*layer_list[layer];
             if (tile_id != no_tile && group.Contains(tiling.GetTileIndex(tile_id)))
+                return 1;
+        }
+        return 0;
+    }
+    bool TileWithFlagExistsAt(int flag_index, ivec2 pos) const
+    {
+        auto tile = Get(pos);
+        for (int layer = 0; layer < num_layers; layer++)
+        {
+            tile_id_t tile_id = tile.*layer_list[layer];
+            if (tile_id != no_tile && tiling.GetTile(tile_id).HasFlag(flag_index))
                 return 1;
         }
         return 0;
@@ -665,6 +684,39 @@ class Map
         data = std::move(new_data);
 
         return 1;
+    }
+
+    std::vector<ivec2> FindTiles(std::string tile_name)
+    {
+        int index = tiling.TileIndex(tile_name);
+        std::vector<ivec2> ret;
+
+        for (int y = 0; y < data.size.y; y++)
+        for (int x = 0; x < data.size.x; x++)
+        {
+            ivec2 pos(x,y);
+            if (TileExistsAt(index, pos))
+                ret.push_back(pos);
+        }
+        return ret;
+    }
+
+    ivec2 FindSingleTile(std::string tile_name) // Fails with a error if there is 0 or more than 1 such tiles.
+    {
+        auto list = FindTiles(tile_name);
+        if (list.size() != 1)
+            Program::Error(Str("Expected a single tile `", tile_name, "` in map `", file_name, "`, but found ", list.size(), "."));
+        return list[0];
+    }
+
+    ivec2 FindSingleTileOpt(std::string tile_name) // Fails with a error if there is more than 1 such tile.
+    {
+        auto list = FindTiles(tile_name);
+        if (list.size() > 1)
+            Program::Error(Str("Expected an optional single tile `", tile_name, "` in map `", file_name, "`, but found ", list.size(), "."));
+        if (list.size() == 0)
+            return ivec2(-1);
+        return list[0];
     }
 };
 

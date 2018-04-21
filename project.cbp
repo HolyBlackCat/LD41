@@ -122,6 +122,7 @@
 		<Unit filename="src/input.h" />
 		<Unit filename="src/main.cpp" />
 		<Unit filename="src/map.cpp" />
+		<Unit filename="src/map.h" />
 		<Unit filename="src/mat.h" />
 		<Unit filename="src/platform.h" />
 		<Unit filename="src/preprocessor.h" />

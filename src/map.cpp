@@ -311,7 +311,7 @@ void Map::Tiling::Data::Finalize()
             for (const auto &flag : it.flags)
             {
                 int flag_index = TileFlagIndex(flag);
-                if (flag_index == 1)
+                if (flag_index == -1)
                     throw std::runtime_error(Str("An invalid flag named `", flag, "` was specified for tile `", it.name, "`."));
                 it.flag_array[flag_index] = 1;
             }
@@ -460,6 +460,13 @@ int Map::Tiling::FlagIndex(std::string name) const // This fails with a error if
     if (it == data.flags.end() || *it != name)
         Program::Error(Str("Attempt to access non-existent tile flag `", name, "`."));
     return it - data.flags.begin();
+}
+int Map::Tiling::TileIndex(std::string name) const // This fails with a error if such flag doesn't exist.
+{
+    auto it = std::lower_bound(data.tiles.begin(), data.tiles.end(), name);
+    if (it == data.tiles.end() || it->name != name)
+        Program::Error(Str("Attempt to access non-existent tile `", name, "`."));
+    return it - data.tiles.begin();
 }
 int Map::Tiling::IndexCount() const // Valid tile_id_t values are: 0 <= x < IndexCount().
 {
