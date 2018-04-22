@@ -19,6 +19,17 @@
 			rules = [],
 		},
 		{
+			name = "bullet barrier",
+			flags = ["invisible"],
+			layer = la_front,
+			va_default = "main",
+			va_display = "main",
+			variants = [
+				{name = "main" , texture = ( 3,28)},
+			],
+			rules = [],
+		},
+		{
 			name = "player spawn",
 			flags = ["invisible"],
 			layer = la_mid,
@@ -103,6 +114,17 @@
 			va_display = "main",
 			variants = [
 				{name = "main" , texture = ( 8,31)},
+			],
+			rules = [],
+		},
+		{
+			name = "help damage",
+			flags = ["invisible"],
+			layer = la_front,
+			va_default = "main",
+			va_display = "main",
+			variants = [
+				{name = "main" , texture = ( 9,31)},
 			],
 			rules = [],
 		},
@@ -281,7 +303,7 @@
 				},
 				{
 					req_variants = ["fill"],
-					results = [{name = "fill"}, {name = "fill0", chance = 0.06}, {name = "fill1", chance = 0.06}],
+					results = [{name = "fill"}, {name = "fill0", chance = 0.1}, {name = "fill1", chance = 0.1}],
 				},
 			],
 		},
@@ -430,7 +452,47 @@
 				},
 			],
 		},
-		
+		{
+			name = "enemy turret",
+			layer = la_mid,
+			va_default = "main",
+			va_display = "main",
+			variants = [
+				{name = "main" , texture = ( 1,26), size = (3,3), offset = (-1,-1)},
+			],
+			rules = [],
+		},
+		{
+			name = "enemy cube",
+			flags = ["invisible"],
+			layer = la_mid,
+			va_default = "main",
+			va_display = "main",
+			variants = [
+				{name = "main" , texture = ( 4,28)},
+			],
+			rules = [],
+		},
+		{
+			name = "enemy laser ccw",
+			layer = la_mid,
+			va_default = "main",
+			va_display = "main",
+			variants = [
+				{name = "main" , texture = ( 4,26), size = (3,3), offset = (-1,-1)},
+			],
+			rules = [],
+		},
+		{
+			name = "enemy laser cw",
+			layer = la_mid,
+			va_default = "main",
+			va_display = "main",
+			variants = [
+				{name = "main" , texture = ( 7,26), size = (3,3), offset = (-1,-1)},
+			],
+			rules = [],
+		},
 		
 	]
 }

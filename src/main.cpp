@@ -42,10 +42,17 @@ namespace Sounds
         SOUND( door               , 0.2  ) \
         SOUND( pew                , 0.4  ) \
         SOUND( bullet_hits        , 0.4  ) \
+        SOUND( bullet_deflected   , 0.2  ) \
         SOUND( block_breaks       , 0.4  ) \
         SOUND( gem_moves          , 0.2  ) \
         SOUND( gem_stops          , 0.2  ) \
         SOUND( gem_breaks         , 0.2  ) \
+        SOUND( turret_starts      , 0.4  ) \
+        SOUND( turret_shoots      , 0.4  ) \
+        SOUND( turret_bullet_hits , 0.4  ) \
+        SOUND( enemy_hurt         , 0.3  ) \
+        SOUND( enemy_dies         , 0.3  ) \
+        SOUND( cube_hits_wall     , 0.3  ) \
 
     namespace Buffers
     {
@@ -278,17 +285,36 @@ class Hitbox
 
         ivec2 half_extent = size / 2;
 
-        for (int y = -half_extent.y; y < half_extent.y + Map::tile_size - 1; y += Map::tile_size)
-        for (int x = -half_extent.x; x < half_extent.x + Map::tile_size - 1; x += Map::tile_size)
+        constexpr int step = 4;
+
+        for (int y = -half_extent.y; y < half_extent.y + Map::tile_size - 1; y += step)
+        for (int x = -half_extent.x; x < half_extent.x + Map::tile_size - 1; x += step)
             points.push_back(min(ivec2(x,y), half_extent-1) + offset);
+    }
+
+    static Hitbox Line(ivec2 from, ivec2 to, float step)
+    {
+        Hitbox ret;
+        float len = (from - to).len();
+        ret.points.push_back(to);
+        for (float i = 0; i < len; i += step)
+            ret.points.push_back(from + (to - from) * i / len);
+        return ret;
     }
 
     bool Hits(const Map &map, ivec2 pos, int flag = Map::flag_solid) const
     {
         for (const auto &point : points)
-            for (int z = 0; z < 3; z++)
-                if (map.TileWithFlagExistsAt(flag, div_ex(pos + point, Map::tile_size)))
-                    return 1;
+            if (map.TileWithFlagExistsAt(flag, div_ex(pos + point, Map::tile_size)))
+                return 1;
+        return 0;
+    }
+
+    template <typename T> bool HitsContainer(const T &cont, ivec2 pos)
+    {
+        for (const auto &point : points)
+            if (cont.find(div_ex(pos + point, Map::tile_size)) != cont.end())
+                return 1;
         return 0;
     }
 
@@ -301,7 +327,8 @@ class Hitbox
 namespace Hitboxes
 {
     const Hitbox player(ivec2(12,28), ivec2(0,2)),
-                 player_small(ivec2(8,20), ivec2(0,2));
+                 player_small(ivec2(12,20), ivec2(0,2)),
+                 enemy_cube(ivec2(30,30));
 }
 
 
@@ -309,9 +336,16 @@ namespace Maps
 {
     Map array[]
     {
-        Map("tutorial.map"),
-        Map("gun.map"),
-        Map("gems.map"),
+        Map("1_tutorial.map"),
+        Map("2_gun.map"),
+        Map("3_gems.map"),
+        Map("4_gem_puzzle.map"),
+        Map("5_enemies.map"),
+        Map("6_another_puzzle.map"),
+        Map("7_cubes.map"),
+        Map("8_and_another_puzzle.map"),
+        Map("9_lasers.map"),
+        Map("10_a_puzzle.map"),
     };
 
     constexpr int map_count = std::extent_v<decltype(array)>;
@@ -365,9 +399,19 @@ struct Objects
     ivec2 help_restart_pos;
     ivec2 help_gems_pos;
     ivec2 help_gems_row_pos;
+    ivec2 help_dmg_pos;
 };
 
 struct Bullet
+{
+    fvec2 pos;
+    fvec2 vel;
+    int age = 0;
+    bool remove = 0;
+    bool deflected = 0;
+};
+
+struct EnemyBullet
 {
     fvec2 pos;
     fvec2 vel;
@@ -378,6 +422,37 @@ struct Gem
 {
     int index;
     ivec2 pos, dir;
+};
+
+struct Turret
+{
+    int ticks_since_player_visible = 0;
+    float angle = f_pi/2;
+    bool barrel = 0;
+    int hp = 3;
+    bool dead = 0;
+};
+
+struct EnemyCube
+{
+    ivec2 pos = ivec2(0);
+    ivec2 dir = ivec2(0);
+    int hp = 3;
+    bool dead = 0;
+
+    EnemyCube(ivec2 pos, ivec2 dir) : pos(pos), dir(dir) {}
+};
+
+struct LaserTurret
+{
+    float angle = 0;
+    int dir = 0;
+    int hp = 3;
+    bool dead = 0;
+    float len = 0, len_back = 0;
+
+    LaserTurret() {}
+    LaserTurret(int dir) : dir(dir) {}
 };
 
 struct Particle
@@ -405,11 +480,17 @@ struct World
     std::string message;
 
     std::vector<Bullet> bullets;
+    std::vector<EnemyBullet> enemy_bullets;
     std::unordered_map<ivec2, int> static_gems;
     std::unordered_map<ivec2, int> gem_walls;
     std::unordered_set<ivec2> selected_static_gems;
     std::vector<Gem> moving_gems;
+    std::unordered_set<ivec2> bullet_barriers;
     std::vector<Particle> particles, particles_front;
+    std::unordered_map<ivec2, Turret> turrets;
+    std::unordered_map<ivec2, LaserTurret> laser_turrets;
+    std::vector<EnemyCube> enemy_cubes;
+    int gem_count[4]{};
 
     void AddParticle(bool front, fvec3 color, float alpha, float beta, fvec2 pos, fvec2 vel, fvec2 acc, float av, float size, int cur_frames, int max_frames, float size_power = 1)
     {
@@ -436,6 +517,34 @@ struct World
         b.vel = vel;
         bullets.push_back(b);
     }
+    void AddEnemyBullet(fvec2 pos, fvec2 vel)
+    {
+        EnemyBullet b;
+        b.pos = pos;
+        b.vel = vel;
+        enemy_bullets.push_back(b);
+    }
+
+    void EnemyShield(fvec2 pos, float rad)
+    {
+        // Effects
+        for (int i = 0; i < rad * 1.8; i++)
+            AddParticle(0, fvec3(random_real_range(0.6,1)), random_real_range(0.1,0.5), random_real_range(0.25,0.75), pos + fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(rad + random_real_range(1.5), 0),
+                        fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(random_real(0.07),0), fvec2(0), random_real_range(0.3), 3, random_int(3), 5, 0.5);
+
+        // Remove bullets
+        auto it = bullets.begin();
+        while (it != bullets.end())
+        {
+            if ((it->pos - pos).len_sqr() < ipow(rad,2) && !it->remove)
+            {
+                it->remove = 1;
+                it->deflected = 1;
+                continue;
+            }
+            it++;
+        }
+    }
 
     void SetMap(const Map &m)
     {
@@ -461,6 +570,7 @@ struct World
         obj.help_restart_pos = map.FindSingleTileOpt("help restart");
         obj.help_gems_pos = map.FindSingleTileOpt("help gems");
         obj.help_gems_row_pos = map.FindSingleTileOpt("help gems row");
+        obj.help_dmg_pos = map.FindSingleTileOpt("help damage");
 
         auto gems_orange = map.FindTiles("gem orange"),
              gems_magenta = map.FindTiles("gem magenta"),
@@ -487,6 +597,25 @@ struct World
                 gem_walls.insert({pos, cont_index});
             cont_index++;
         }
+
+        for (const auto &it : map.FindTiles("bullet barrier"))
+            bullet_barriers.insert(it);
+
+        for (const auto &it : map.FindTiles("enemy turret"))
+            turrets.insert({it * Map::tile_size + Map::tile_size/2, {}});
+
+        for (const auto &it : map.FindTiles("enemy cube"))
+            enemy_cubes.push_back(EnemyCube(it * Map::tile_size + Map::tile_size/2, it % 2 * 2 - 1));
+
+        for (const auto &it : map.FindTiles("enemy laser ccw"))
+            laser_turrets.insert({it * Map::tile_size + Map::tile_size/2, LaserTurret(-1)});
+        for (const auto &it : map.FindTiles("enemy laser cw"))
+            laser_turrets.insert({it * Map::tile_size + Map::tile_size/2, LaserTurret(1)});
+
+
+        // Count gems
+        for (const auto &gem : static_gems)
+            gem_count[gem.second]++;
     }
 };
 
@@ -504,9 +633,12 @@ void SaveState()
 
 int main(int, char **)
 {
-    constexpr int start_from_level = 2;
+    constexpr int start_from_level = Maps::map_count-1;
+    //constexpr int start_from_level = 4;
     constexpr bool start_with_gun = start_from_level >= 2;
 
+    constexpr int cam_margin = 32;
+    constexpr ivec2 plr_enemy_hitbox(8,24);
     constexpr fvec2 plr_vel_cap(2.5,7);
     constexpr float plr_walk_acc = 0.6, plr_grav_acc = 0.2, plr_extra_jump_stopping_grav = 0.25, plr_jump_speed = 5.4, plr_discard_lag_vel_th = 0.1;
     constexpr int plr_can_respawn_after = 20, plr_pipe_ticks_for_one_pixel = 3, plr_gun_cooldown = 15;
@@ -515,6 +647,9 @@ int main(int, char **)
     constexpr float darkness_step = 0.01;
     constexpr int gem_speed = 4; // Should be a power of two, not greater than tile size.
     constexpr fvec3 gem_colors[4] {fvec3(1,0.6,0), fvec3(0.9,0,0.4), fvec3(0,0.5,1), fvec3(0,1,0.5)};
+    constexpr float tur_angle_step = 0.03, tur_bullet_speed = 5;
+    constexpr int tur_start_time = 30, tur_cooldown = 12;
+    constexpr float las_tur_ang_vel = 0.009, las_tur_ray_offset = 29, las_tur_len_cap = 2000, las_tur_ray_width = 8, las_tur_shorten_ray_hitbox = 5;
 
     Draw::Init();
     Sounds::Init();
@@ -901,6 +1036,77 @@ int main(int, char **)
                 }
             }
 
+            { // Death by turret collision
+                if (!p.dead)
+                {
+                    for (const auto &it : w.turrets)
+                        if (!it.second.dead && (abs(it.first - p.pos) < plr_enemy_hitbox/2 + ivec2(10)).all())
+                            p.dead = 1;
+                }
+            }
+
+            { // Death by enemy cube collision
+                if (!p.dead)
+                {
+                    for (const auto &it : w.enemy_cubes)
+                        if (!it.dead && (abs(it.pos - p.pos) < plr_enemy_hitbox/2 + ivec2(15)).all())
+                            p.dead = 1;
+                }
+            }
+
+            { // Death by laser turret collision
+                if (!p.dead)
+                {
+                    for (const auto &it : w.laser_turrets)
+                        if (!it.second.dead && (abs(it.first - p.pos) < plr_enemy_hitbox/2 + ivec2(10)).all())
+                            p.dead = 1;
+                }
+            }
+
+            { // Death by enemy bullet
+                if (!p.dead)
+                {
+                    for (const auto &it : w.enemy_bullets)
+                    {
+                        for (ivec2 point : {it.pos, it.pos + it.vel/2})
+                        {
+                            if ((abs(point - p.pos) < plr_enemy_hitbox).all())
+                                p.dead = 1;
+                        }
+                    }
+                }
+            }
+
+            { // Death by laser
+                if (!p.dead)
+                {
+                    for (const auto &pair : w.laser_turrets)
+                    {
+                        const auto &pos = pair.first;
+                        const auto &it = pair.second;
+                        if (it.dead)
+                            continue;
+                        fvec2 d(std::cos(it.angle), std::sin(it.angle));
+                        fvec2 n(-d.y, d.x);
+                        for (auto offset : Hitboxes::player_small.Points())
+                        {
+                            fvec2 point = p.pos + offset - pos;
+                            ivec2 loc(point /dot/ d, point /dot/ n);
+                            if (loc.x < it.len + las_tur_ray_offset - las_tur_shorten_ray_hitbox &&
+                                -loc.x < it.len_back + las_tur_ray_offset - las_tur_shorten_ray_hitbox && abs(loc.y) <= las_tur_ray_width/2)
+                            {
+                                p.dead = 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            { // Revive if player shouldn't be dead
+                if (p.respawning || p.changing_level)
+                    p.dead = 0;
+            }
+
             { // Death particles
                 if (p.dead && !p.prev_dead)
                 {
@@ -965,87 +1171,401 @@ int main(int, char **)
             }
         }
 
+        { // Turrets
+            auto iter = w.turrets.begin();
+            while (iter != w.turrets.end())
+            {
+                auto &pos = iter->first;
+                auto &it = iter->second;
+                if (it.dead)
+                {
+                    iter++;
+                    continue;
+                }
+                fvec2 target_dir = (p.pos - pos).norm();
+                fvec2 cur_dir(std::cos(it.angle), std::sin(it.angle));
+                float delta_angle = (target_dir != fvec2(0) ? std::acos(target_dir /dot/ cur_dir) * sign(cur_dir /cross/ target_dir) : 0);
+
+                auto line_hitbox = Hitbox::Line(pos, p.pos, 2);
+
+                bool player_visible = !line_hitbox.Hits(w.map, ivec2(0,0)) && !line_hitbox.HitsContainer(w.gem_walls, ivec2(0,0)) && !line_hitbox.HitsContainer(w.static_gems, ivec2(0,0));
+
+                if (player_visible)
+                {
+                    if (abs(delta_angle) < tur_angle_step)
+                        it.angle += delta_angle;
+                    else
+                        it.angle += tur_angle_step * sign(delta_angle);
+                }
+
+                if (player_visible && !p.dead)
+                {
+                    if (it.ticks_since_player_visible == 0)
+                        Sounds::turret_starts(pos);
+                    it.ticks_since_player_visible++;
+
+                    if (it.ticks_since_player_visible >= tur_start_time && (it.ticks_since_player_visible - tur_start_time) % tur_cooldown == 0)
+                    {
+                        Sounds::turret_shoots(pos);
+                        cur_dir = fvec2(std::cos(it.angle), std::sin(it.angle)); // We recompute this for new angle
+                        w.AddEnemyBullet(pos + cur_dir * 20 + fvec2(-cur_dir.y, cur_dir.x) * (it.barrel ? 1 : -1) * 3, cur_dir * tur_bullet_speed);
+                        it.barrel = !it.barrel;
+                    }
+                }
+                else
+                {
+                    it.ticks_since_player_visible = 0;
+                }
+
+                // Health
+                if (w.gem_count[0] > 0)
+                {
+                    w.EnemyShield(pos, 36);
+                }
+                else
+                {
+                    for (auto &bullet : w.bullets)
+                    {
+                        if ((bullet.pos - pos).len_sqr() < ipow(20,2))
+                        {
+                            it.hp--;
+                            if (it.hp == 0)
+                            {
+                                constexpr int gem_color = 0;
+                                Sounds::enemy_dies(pos);
+                                it.dead = 1;
+                                for (int i = 0; i < 40; i++)
+                                {
+                                    fvec2 d(random_real_range(1), random_real_range(1));
+                                    float c = std::pow(random_int(3) / 2.f, 1.5);
+                                    w.AddParticle(1, gem_colors[gem_color] * (1-c) + fvec3(1) * c, random_real_range(0.5,0.9), random_real_range(0.1,0.4), pos + d * random_real(16), d * random_real_range(0.1,2.8),
+                                                  fvec2(0,0.002), random_real_range(0.3), 12, random_int(15), 30, 0.25);
+                                }
+                            }
+                            else if (it.hp > 0)
+                            {
+                                Sounds::enemy_hurt(pos);
+                            }
+                            bullet.remove = 1;
+                        }
+                    }
+                }
+
+
+                iter++;
+            }
+        }
+
+        { // Laser turrets
+            auto PointSolid = [&](ivec2 pos) -> bool
+            {
+                ivec2 tile_pos = div_ex(pos, Map::tile_size);
+                if (w.map.TileWithFlagExistsAt(Map::flag_solid, tile_pos))
+                    return 1;
+                if (w.static_gems.find(tile_pos) != w.static_gems.end())
+                    return 1;
+                if (w.gem_walls.find(tile_pos) != w.gem_walls.end())
+                    return 1;
+                return 0;
+            };
+
+            auto iter = w.laser_turrets.begin();
+            while (iter != w.laser_turrets.end())
+            {
+                auto &pos = iter->first;
+                auto &it = iter->second;
+                if (it.dead)
+                {
+                    iter++;
+                    continue;
+                }
+
+                it.angle += it.dir * las_tur_ang_vel;
+
+                fvec2 d(std::cos(it.angle), std::sin(it.angle));
+
+                // Lasers
+                for (int s = -1; s <= 1; s += 2)
+                {
+                    float &l = (s > 0 ? it.len : it.len_back);
+                    l = 0;
+                    float step = 8; // Should be a power of two.
+                    while (1)
+                    {
+                        fvec2 point = pos + d * s * (l + las_tur_ray_offset);
+                        if (PointSolid(point))
+                        {
+                            step /= 2;
+                            l -= step;
+                            if (step < 0.1)
+                                break;
+                            else
+                                continue;
+                        }
+                        l += step;
+
+                        if (l > las_tur_len_cap)
+                            break;
+                    }
+                }
+
+                // Particles at laser ends
+                for (int s = -1; s <= 1; s += 2)
+                {
+                    float c = std::pow(random_int(3) / 2.f, 1.5);
+                    w.AddParticle(0, gem_colors[2] * (1-c) + fvec3(1) * c, random_real_range(0.5,0.9), random_real_range(0.1,0.4), pos + d * s * ((s > 0 ? it.len : it.len_back) + las_tur_ray_offset) + fvec2(-d.y,d.x) * random_real_range(2),
+                                  -d * s * random_real_range(0.1,2.8) + fvec2(-d.y,d.x) * random_real_range(0.1), d * s * 0.02, random_real_range(0.3), 8, random_int(15), 30, 0.33);
+                }
+
+                // Health
+                if (w.gem_count[2] > 0)
+                {
+                    w.EnemyShield(pos, 36);
+                }
+                else
+                {
+                    for (auto &bullet : w.bullets)
+                    {
+                        if ((bullet.pos - pos).len_sqr() < ipow(20,2))
+                        {
+                            it.hp--;
+                            if (it.hp == 0)
+                            {
+                                constexpr int gem_color = 2;
+                                Sounds::enemy_dies(pos);
+                                it.dead = 1;
+                                for (int i = 0; i < 40; i++)
+                                {
+                                    fvec2 d(random_real_range(1), random_real_range(1));
+                                    float c = std::pow(random_int(3) / 2.f, 1.5);
+                                    w.AddParticle(1, gem_colors[gem_color] * (1-c) + fvec3(1) * c, random_real_range(0.5,0.9), random_real_range(0.1,0.4), pos + d * random_real(16), d * random_real_range(0.1,2.8),
+                                                  fvec2(0,0.002), random_real_range(0.3), 12, random_int(15), 30, 0.25);
+                                }
+                            }
+                            else if (it.hp > 0)
+                            {
+                                Sounds::enemy_hurt(pos);
+                            }
+                            bullet.remove = 1;
+                        }
+                    }
+                }
+
+                iter++;
+            }
+        }
+
+        { // Enemy cubes
+            auto IsSolid = [&](decltype(w.enemy_cubes)::iterator this_it, ivec2 pos) -> bool
+            {
+                bool hits = Hitboxes::enemy_cube.Hits(w.map, pos);
+                if (hits)
+                    return 1;
+                for (const auto &point : Hitboxes::enemy_cube.Points())
+                {
+                    ivec2 tile_pos = div_ex(point + pos, Map::tile_size);
+                    if (w.static_gems.find(tile_pos) != w.static_gems.end())
+                        return 1;
+                    if (w.gem_walls.find(tile_pos) != w.gem_walls.end())
+                        return 1;
+                }
+                auto it = w.enemy_cubes.begin();
+                while (it != w.enemy_cubes.end())
+                {
+                    if (it == this_it)
+                    {
+                        it++;
+                        continue;
+                    }
+
+                    if ((abs(pos - it->pos) < 30).all())
+                        return 1;
+
+                    it++;
+                }
+                return 0;
+            };
+
+            auto iter = w.enemy_cubes.begin();
+            while (iter != w.enemy_cubes.end())
+            {
+                auto &it = *iter;
+                if (it.dead)
+                {
+                    iter++;
+                    continue;
+                }
+
+                // Change direction
+                if (!IsSolid(iter, it.pos + ivec2(0)))
+                {
+                    bool h = IsSolid(iter, it.pos + it.dir.set_y(0)),
+                         v = IsSolid(iter, it.pos + it.dir.set_x(0));
+                    bool dir_changed = 0;
+
+                    if (h)
+                    {
+                        it.dir.x *= -1;
+                        dir_changed = 1;
+                    }
+                    if (v)
+                    {
+                        it.dir.y *= -1;
+                        dir_changed = 1;
+                    }
+                    if (!dir_changed && IsSolid(iter, it.pos + it.dir))
+                    {
+                        it.dir *= -1;
+                        dir_changed = 1;
+                    }
+
+
+                    if (dir_changed)
+                        Sounds::cube_hits_wall(it.pos);
+                }
+
+                // Move
+                {
+                    if (!IsSolid(iter, it.pos + it.dir))
+                        it.pos += it.dir;
+                }
+
+                // Health
+                if (w.gem_count[1] > 0)
+                {
+                    w.EnemyShield(it.pos, 28);
+                }
+                else
+                {
+                    for (auto &bullet : w.bullets)
+                    {
+                        if ((bullet.pos - it.pos).len_sqr() < ipow(20,2))
+                        {
+                            it.hp--;
+                            if (it.hp == 0)
+                            {
+                                constexpr int gem_color = 1;
+                                Sounds::enemy_dies(it.pos);
+                                it.dead = 1;
+                                for (int i = 0; i < 40; i++)
+                                {
+                                    fvec2 d(random_real_range(1), random_real_range(1));
+                                    float c = std::pow(random_int(3) / 2.f, 1.5);
+                                    w.AddParticle(1, gem_colors[gem_color] * (1-c) + fvec3(1) * c, random_real_range(0.5,0.9), random_real_range(0.1,0.4), it.pos + d * random_real(16), d * random_real_range(0.1,2.8),
+                                                  fvec2(0,0.002), random_real_range(0.3), 12, random_int(15), 30, 0.25);
+                                }
+                            }
+                            else if (it.hp > 0)
+                            {
+                                Sounds::enemy_hurt(it.pos);
+                            }
+                            bullet.remove = 1;
+                        }
+                    }
+                }
+
+                iter++;
+            }
+        }
+
         { // Bullets
             static const std::vector<ivec2> hitbox_offsets = {ivec2(-2,-2), ivec2(-2,2), ivec2(2,-2), ivec2(2,2)};
             auto it = w.bullets.begin();
             while (it != w.bullets.end())
             {
                 fvec2 dir = it->vel.norm(), dir2(dir.y, -dir.x);
-                bool remove = 0, tile_destroyed = 0;
+                bool &remove = it->remove, &was_deflected = it->deflected;
+                bool tile_destroyed = 0;
                 std::vector<ivec2> destroyed_tiles;
                 std::vector<ivec2> hit_gems;
 
-                for (ivec2 offset : hitbox_offsets)
+                if (!remove)
                 {
-                    ivec2 tile_pos = div_ex(iround(it->pos + offset), Map::tile_size);
-                    auto tile = w.map.Get(tile_pos);
-                    for (int i = 0; i < Map::layer_count; i++)
+                    for (ivec2 offset : hitbox_offsets)
                     {
-                        auto this_tile = tile.*Map::layer_list[i];
-                        if (this_tile == Map::no_tile)
-                            continue;
-                        const auto &info = Map::tiling.GetTile(this_tile);
-                        if (info.HasFlag(Map::flag_solid))
+                        ivec2 tile_pos = div_ex(iround(it->pos + offset), Map::tile_size);
+                        auto tile = w.map.Get(tile_pos);
+                        for (int i = 0; i < Map::layer_count; i++)
+                        {
+                            auto this_tile = tile.*Map::layer_list[i];
+                            if (this_tile == Map::no_tile)
+                                continue;
+                            const auto &info = Map::tiling.GetTile(this_tile);
+                            if (info.HasFlag(Map::flag_solid))
+                            {
+                                remove = 1;
+                            }
+                            if (info.HasFlag(Map::flag_destructable))
+                            {
+                                w.map.Set(tile_pos, Map::layer_list[i], Map::no_tile);
+                                remove = 1;
+                                tile_destroyed = 1;
+                                destroyed_tiles.push_back(tile_pos);
+                            }
+                        }
+
+                        if (w.static_gems.find(tile_pos) != w.static_gems.end())
+                        {
+                            remove = 1;
+                            hit_gems.push_back(tile_pos);
+                        }
+                        if (w.gem_walls.find(tile_pos) != w.gem_walls.end())
                         {
                             remove = 1;
                         }
-                        if (info.HasFlag(Map::flag_destructable))
+                        if (w.bullet_barriers.find(tile_pos) != w.bullet_barriers.end())
                         {
-                            w.map.Set(tile_pos, Map::layer_list[i], Map::no_tile);
                             remove = 1;
-                            tile_destroyed = 1;
-                            destroyed_tiles.push_back(tile_pos);
+                            was_deflected = 1;
                         }
                     }
 
-                    if (w.static_gems.find(tile_pos) != w.static_gems.end())
+                    if (hit_gems.size())
                     {
-                        remove = 1;
-                        hit_gems.push_back(tile_pos);
-                    }
-                    if (w.gem_walls.find(tile_pos) != w.gem_walls.end())
-                    {
-                        remove = 1;
-                    }
-                }
+                        w.selected_static_gems.clear();
 
-                if (hit_gems.size())
-                {
-                    w.selected_static_gems.clear();
-
-                    static void (*func)(ivec2, const decltype(w.static_gems) &, decltype(w.selected_static_gems) &)
-                        = [](ivec2 pos, const decltype(w.static_gems) &gems, decltype(w.selected_static_gems) &selected)
-                    {
-                        if (gems.find(pos) == gems.end())
-                            return;
-                        selected.insert(pos);
-
-                        ivec2 next[4]
+                        static void (*func)(ivec2, const decltype(w.static_gems) &, decltype(w.selected_static_gems) &)
+                            = [](ivec2 pos, const decltype(w.static_gems) &gems, decltype(w.selected_static_gems) &selected)
                         {
-                            pos + ivec2(1,0),
-                            pos + ivec2(-1,0),
-                            pos + ivec2(0,1),
-                            pos + ivec2(0,-1),
+                            if (gems.find(pos) == gems.end())
+                                return;
+                            selected.insert(pos);
+
+                            ivec2 next[4]
+                            {
+                                pos + ivec2(1,0),
+                                pos + ivec2(-1,0),
+                                pos + ivec2(0,1),
+                                pos + ivec2(0,-1),
+                            };
+
+                            for (const auto &it : next)
+                            {
+                                if (selected.find(it) != selected.end())
+                                    continue;
+                                func(it, gems, selected);
+                            }
                         };
 
-                        for (const auto &it : next)
-                        {
-                            if (selected.find(it) != selected.end())
-                                continue;
-                            func(it, gems, selected);
-                        }
-                    };
-
-                    for (const auto &pos : hit_gems)
-                        func(pos, w.static_gems, w.selected_static_gems);
+                        for (const auto &pos : hit_gems)
+                            func(pos, w.static_gems, w.selected_static_gems);
+                    }
                 }
 
                 if (remove)
                 {
                     if (!tile_destroyed)
-                        Sounds::bullet_hits(it->pos);
+                    {
+                        if (was_deflected)
+                            Sounds::bullet_deflected(it->pos);
+                        else
+                            Sounds::bullet_hits(it->pos);
+                    }
                     else
+                    {
                         Sounds::block_breaks(it->pos);
+                    }
+
                     for (int i = 0; i < 10; i++)
                     {
                         fvec2 dir = fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(1,0);
@@ -1073,6 +1593,99 @@ int main(int, char **)
                 if (it->age % bullet_particle_period == 0)
                     w.AddParticle(0, fvec3(0.7,1,0.2), 1, 0.5, it->pos + dir * random_real_range(1) + dir2 * random_real_range(1), fvec2(0), fvec2(0), random_real_range(0.1), 4, random_int(10), 18, 0.3);
                 it++;
+            }
+        }
+
+        { // Enemy bullets
+            static const std::vector<ivec2> hitbox_offsets = {ivec2(-2,-2), ivec2(-2,2), ivec2(2,-2), ivec2(2,2)};
+            auto it = w.enemy_bullets.begin();
+            while (it != w.enemy_bullets.end())
+            {
+                fvec2 dir = it->vel.norm(), dir2(dir.y, -dir.x);
+                bool remove = 0, tile_destroyed = 0;
+                std::vector<ivec2> destroyed_tiles;
+
+                for (ivec2 offset : hitbox_offsets)
+                {
+                    ivec2 tile_pos = div_ex(iround(it->pos + offset), Map::tile_size);
+                    auto tile = w.map.Get(tile_pos);
+                    for (int i = 0; i < Map::layer_count; i++)
+                    {
+                        auto this_tile = tile.*Map::layer_list[i];
+                        if (this_tile == Map::no_tile)
+                            continue;
+                        const auto &info = Map::tiling.GetTile(this_tile);
+                        if (info.HasFlag(Map::flag_solid))
+                        {
+                            remove = 1;
+                        }
+                        if (info.HasFlag(Map::flag_destructable))
+                        {
+                            w.map.Set(tile_pos, Map::layer_list[i], Map::no_tile);
+                            remove = 1;
+                            tile_destroyed = 1;
+                            destroyed_tiles.push_back(tile_pos);
+                        }
+                    }
+
+                    if (w.static_gems.find(tile_pos) != w.static_gems.end())
+                        remove = 1;
+                    if (w.gem_walls.find(tile_pos) != w.gem_walls.end())
+                        remove = 1;
+                    // We ignore barriers... if (w.bullet_barriers.find(tile_pos) != w.bullet_barriers.end())
+                }
+
+                if (remove)
+                {
+                    if (!tile_destroyed)
+                    {
+                        Sounds::turret_bullet_hits(it->pos);
+                    }
+                    else
+                    {
+                        Sounds::block_breaks(it->pos);
+                    }
+
+                    for (int i = 0; i < 10; i++)
+                    {
+                        fvec2 dir = fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(1,0);
+                        w.AddParticle(1, fvec3(1,0.7,0.1), 1, 0.5, it->pos + dir * random_real_range(3), dir * random_real(0.6), fvec2(0), random_real_range(0.2), 4, random_int(15), 30, 0.3);
+                    }
+                    if (tile_destroyed)
+                    {
+                        for (auto tile_pos : destroyed_tiles)
+                        {
+                            fvec2 base_pos = tile_pos * Map::tile_size + Map::tile_size/2;
+                            for (int i = 0; i < 16; i++)
+                            {
+                                fvec2 offset(random_real_range(Map::tile_size/2), random_real_range(Map::tile_size/2));
+                                fvec2 pos = base_pos + offset;
+                                w.AddParticle(0, fvec3(random_real_range(0.9,1)), 0.3, 1, pos, offset.norm() * random_real(1.5), fvec2(0,0.03), random_real_range(0.1), 6, random_int(15), 30, 0.25);
+                            }
+                        }
+                    }
+                    it = w.enemy_bullets.erase(it);
+                    continue;
+                }
+
+                it->pos += it->vel;
+                it->age++;
+                if (it->age % bullet_particle_period == 0)
+                    w.AddParticle(0, fvec3(1,0.7,0.1), 1, 0.5, it->pos + dir * random_real_range(2.5) + dir2 * random_real_range(1), fvec2(0), fvec2(0), random_real_range(0.1), 3, random_int(10), 18, 0.3);
+                it++;
+            }
+        }
+
+        { // Bullet barrier particles
+            for (const auto &it : w.bullet_barriers)
+            {
+                if ((abs(it * Map::tile_size + Map::tile_size/2 - w.cam.pos) > screen_sz/2 + Map::tile_size).any())
+                    continue;
+                for (int i = 0; i < 1; i++)
+                {
+                    w.AddParticle(0, fvec3(random_real_range(0.6,1)), random_real_range(0.1,0.5), random_real_range(0.25,0.75), it * Map::tile_size + Map::tile_size/2 + fvec2(random_real_range(8), random_real_range(8)),
+                                  fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(random_real(0.1),0), fvec2(0), random_real_range(0.3), 3, random_int(15), 30, 0.5);
+                }
             }
         }
 
@@ -1163,13 +1776,14 @@ int main(int, char **)
                         w.static_gems.erase(it);
                     }
 
-                    int gem_count[4]{};
+                    for (int i = 0; i < 4; i++)
+                        w.gem_count[i] = 0;
                     for (const auto &gem : w.static_gems)
-                        gem_count[gem.second]++;
+                        w.gem_count[gem.second]++;
 
                     for (int i = 0; i < 4; i++)
                     {
-                        if (gem_count[i] > 0)
+                        if (w.gem_count[i] > 0)
                             continue;
                         auto it = w.gem_walls.begin();
                         while (it != w.gem_walls.end())
@@ -1238,6 +1852,12 @@ int main(int, char **)
 
             w.cam.real_pos += w.cam.vel;
 
+            for (int i = 0; i < 2; i++)
+            {
+                if (abs(p.pos[i] - w.cam.real_pos[i]) > screen_sz[i]/2 - cam_margin)
+                    w.cam.real_pos[i] = p.pos[i] - (screen_sz[i]/2 - cam_margin) * sign(p.pos[i] - w.cam.real_pos[i]);
+            }
+
             w.cam.pos = iround(w.cam.real_pos);
         }
     };
@@ -1271,6 +1891,62 @@ int main(int, char **)
 
         { // Map
             w.map.Render(r, screen_sz, w.cam.pos, Map::mid);
+        }
+
+        { // Turrets
+            for (const auto &pair : w.turrets)
+            {
+                const auto &it = pair.second;
+                if (it.dead)
+                    continue;
+                ivec2 pos = pair.first;
+                if ((abs(pos - w.cam.pos) > screen_sz/2 + Map::tile_size*3).any())
+                    continue;
+                r.Quad(pos - w.cam.pos, ivec2(48-2)).tex(ivec2(32,32)+1).center(ivec2(14,24)-1).rotate(it.angle);
+                r.Quad(pos - w.cam.pos, ivec2(48-2)).tex(ivec2(32+48,32)+1).center();
+            }
+        }
+
+        { // Laser turrets
+            for (const auto &pair : w.laser_turrets)
+            {
+                const auto &it = pair.second;
+                if (it.dead)
+                    continue;
+                ivec2 pos = pair.first;
+                if ((abs(pos - w.cam.pos) > screen_sz/2 + Map::tile_size*3).any())
+                    continue;
+                r.Quad(pos - w.cam.pos, ivec2(80,48)-2).tex(ivec2(0,96)+1).center().rotate(it.angle);
+
+                // Rays
+                for (int s = -1; s <= 1; s += 2)
+                {
+                    r.Quad(pos - w.cam.pos, fvec2(max((s > 0 ? it.len : it.len_back) - 5, 0), 14)).tex(ivec2(49,81), ivec2(14,14)).pixel_center(ivec2(0,7)).rotate(s > 0 ? it.angle : it.angle + f_pi).translate(fvec2(las_tur_ray_offset,0))
+                     .alpha(random_real_range(0.85,1)).beta(random_real_range(0.1,0.4));
+                }
+
+                // Ray ends
+                fvec2 d(std::cos(it.angle), std::sin(it.angle));
+                for (int s = -1; s <= 1; s += 2)
+                {
+                    r.Quad(pos - w.cam.pos + d * s * ((s > 0 ? it.len : it.len_back) + las_tur_ray_offset), fvec2(14)).tex(ivec2(65,81)).center().alpha(random_real_range(0.85,1)).beta(random_real_range(0.1,0.4));
+                }
+
+                r.Quad(pos - w.cam.pos, ivec2(48-2)).tex(ivec2(32+48,32+48)+1).center();
+            }
+        }
+
+        { // Enemy cubes
+            for (const auto &it : w.enemy_cubes)
+            {
+                if (it.dead)
+                    continue;
+                if ((abs(it.pos - w.cam.pos) > screen_sz/2 + Map::tile_size*3).any())
+                    continue;
+                r.Quad(it.pos - w.cam.pos, ivec2(30)).tex(ivec2(137,41)).alpha(random_real_range(0.9,1)).beta(random_real_range(0,1)).center();
+                r.Quad(it.pos - w.cam.pos + iround(fvec2(random_real_range(0.6), random_real_range(0.6))), ivec2(30))
+                 .tex(ivec2(137,41)).alpha(random_real_range(0.5,1)).beta(random_real_range(0,1)).rotate(random_real_range(0.1)).center();
+            }
         }
 
         { // Gem walls
@@ -1381,11 +2057,11 @@ int main(int, char **)
             }
         }
 
-        { // Particles front
-            for (const auto &it : w.particles_front)
+        { // Enemy bullets
+            for (const auto &it : w.enemy_bullets)
             {
-                float size = it.size * std::pow(1 - it.cur_frames / float(it.max_frames), it.size_power);
-                r.Quad(it.pos - w.cam.pos, fvec2(size)).color(it.color).alpha(it.alpha).beta(it.beta).rotate(it.angle).center();
+                float angle = std::atan2(it.vel.y, it.vel.x);
+                r.Quad(it.pos - w.cam.pos, ivec2(30,14)).center().rotate(angle).tex(ivec2(1,65+16)).alpha(1).beta(0.5);
             }
         }
 
@@ -1394,6 +2070,14 @@ int main(int, char **)
             {
                 float angle = std::atan2(it.vel.y, it.vel.x);
                 r.Quad(it.pos - w.cam.pos, ivec2(30,14)).center().rotate(angle).tex(ivec2(1,65)).alpha(1).beta(0.5);
+            }
+        }
+
+        { // Particles front
+            for (const auto &it : w.particles_front)
+            {
+                float size = it.size * std::pow(1 - it.cur_frames / float(it.max_frames), it.size_power);
+                r.Quad(it.pos - w.cam.pos, fvec2(size)).color(it.color).alpha(it.alpha).beta(it.beta).rotate(it.angle).center();
             }
         }
 
@@ -1423,6 +2107,8 @@ int main(int, char **)
                 r.Text(w.obj.help_gems_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Shoot gems to select them\nPress \1", Keys::c.name(), "\r to move selected gems\nHold \1Arrows\r to change direction")).preset(Preset);
             if (w.obj.help_gems_row_pos != ivec2(-1))
                 r.Text(w.obj.help_gems_row_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Gems explode if placed in a row of three or longer")).preset(Preset);
+            if (w.obj.help_dmg_pos != ivec2(-1))
+                r.Text(w.obj.help_dmg_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Enemies become vulnerable once all\ngems of the corresponding color are destroyed")).preset(Preset);
         }
 
         { // Gem movement direction indicator

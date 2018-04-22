@@ -189,23 +189,28 @@ void Map::Tiling::Tile::Finalize(int index)
         }
 
         // Make duplicates (we do it before finalizing, because finalizing applies requirement matrices and checks result vectors)
-        for (auto rule_it = rules.begin(); rule_it != rules.end();)
         {
-            auto &original_rule = *rule_it++; // Sic! We want to increment it now to insert at the right place later.
+            std::vector<TileRule> new_rules;
 
-            for (const auto &dupe : original_rule.duplicate)
+            for (const auto &rule : rules)
             {
-                rule_it = rules.insert(rule_it, original_rule);
+                new_rules.push_back(rule);
+                for (const auto &dupe : rule.duplicate)
+                {
+                    TileRule new_rule = rule;
 
-                for (auto mem_ptr : {&TileRule::requires, &TileRule::requires_not})
-                for (auto &req : (*rule_it).*mem_ptr)
-                    req.offset = dupe.matrix /mul/ req.offset;
+                    for (auto mem_ptr : {&TileRule::requires, &TileRule::requires_not})
+                    for (auto &req : new_rule.*mem_ptr)
+                        req.offset = dupe.matrix /mul/ req.offset;
 
-                if (dupe.results.size() > 0)
-                    rule_it->results = dupe.results;
+                    if (dupe.results.size() > 0)
+                        new_rule.results = dupe.results;
 
-                rule_it++;
+                    new_rules.push_back(new_rule);
+                }
             }
+
+            rules = std::move(new_rules);
         }
 
         // Finalize
