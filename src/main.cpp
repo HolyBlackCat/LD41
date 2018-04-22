@@ -43,6 +43,9 @@ namespace Sounds
         SOUND( pew                , 0.4  ) \
         SOUND( bullet_hits        , 0.4  ) \
         SOUND( block_breaks       , 0.4  ) \
+        SOUND( gem_moves          , 0.2  ) \
+        SOUND( gem_stops          , 0.2  ) \
+        SOUND( gem_breaks         , 0.2  ) \
 
     namespace Buffers
     {
@@ -288,6 +291,11 @@ class Hitbox
                     return 1;
         return 0;
     }
+
+    const auto &Points() const
+    {
+        return points;
+    }
 };
 
 namespace Hitboxes
@@ -303,6 +311,7 @@ namespace Maps
     {
         Map("tutorial.map"),
         Map("gun.map"),
+        Map("gems.map"),
     };
 
     constexpr int map_count = std::extent_v<decltype(array)>;
@@ -327,6 +336,8 @@ struct Player
     bool no_movement = 0;
     int gun_cooldown = 0;
     ivec2 gun_offset = ivec2(0);
+    ivec2 gem_dir = ivec2(0);
+    ivec2 nearest_selected_gem = ivec2(0);
 
     bool respawning = 1;
     bool dead = 0;
@@ -352,6 +363,8 @@ struct Objects
     ivec2 help_jump_pos;
     ivec2 help_gun_pos;
     ivec2 help_restart_pos;
+    ivec2 help_gems_pos;
+    ivec2 help_gems_row_pos;
 };
 
 struct Bullet
@@ -359,6 +372,12 @@ struct Bullet
     fvec2 pos;
     fvec2 vel;
     int age = 0;
+};
+
+struct Gem
+{
+    int index;
+    ivec2 pos, dir;
 };
 
 struct Particle
@@ -386,6 +405,10 @@ struct World
     std::string message;
 
     std::vector<Bullet> bullets;
+    std::unordered_map<ivec2, int> static_gems;
+    std::unordered_map<ivec2, int> gem_walls;
+    std::unordered_set<ivec2> selected_static_gems;
+    std::vector<Gem> moving_gems;
     std::vector<Particle> particles, particles_front;
 
     void AddParticle(bool front, fvec3 color, float alpha, float beta, fvec2 pos, fvec2 vel, fvec2 acc, float av, float size, int cur_frames, int max_frames, float size_power = 1)
@@ -436,6 +459,34 @@ struct World
         obj.help_jump_pos = map.FindSingleTileOpt("help jump");
         obj.help_gun_pos = map.FindSingleTileOpt("help gun");
         obj.help_restart_pos = map.FindSingleTileOpt("help restart");
+        obj.help_gems_pos = map.FindSingleTileOpt("help gems");
+        obj.help_gems_row_pos = map.FindSingleTileOpt("help gems row");
+
+        auto gems_orange = map.FindTiles("gem orange"),
+             gems_magenta = map.FindTiles("gem magenta"),
+             gems_blue = map.FindTiles("gem blue"),
+             gems_green = map.FindTiles("gem green");
+
+        int cont_index = 0;
+        for (auto *cont : {&gems_orange, &gems_magenta, &gems_blue, &gems_green})
+        {
+            for (ivec2 pos : *cont)
+                static_gems.insert({pos, cont_index});
+            cont_index++;
+        }
+
+        auto gem_walls_orange = map.FindTiles("gem wall orange"),
+             gem_walls_magenta = map.FindTiles("gem wall magenta"),
+             gem_walls_blue = map.FindTiles("gem wall blue"),
+             gem_walls_green = map.FindTiles("gem wall green");
+
+        cont_index = 0;
+        for (auto *cont : {&gem_walls_orange, &gem_walls_magenta, &gem_walls_blue, &gem_walls_green})
+        {
+            for (ivec2 pos : *cont)
+                gem_walls.insert({pos, cont_index});
+            cont_index++;
+        }
     }
 };
 
@@ -453,8 +504,8 @@ void SaveState()
 
 int main(int, char **)
 {
-    constexpr int start_from_level = 1;
-    constexpr bool start_with_gun = 0;
+    constexpr int start_from_level = 2;
+    constexpr bool start_with_gun = start_from_level >= 2;
 
     constexpr fvec2 plr_vel_cap(2.5,7);
     constexpr float plr_walk_acc = 0.6, plr_grav_acc = 0.2, plr_extra_jump_stopping_grav = 0.25, plr_jump_speed = 5.4, plr_discard_lag_vel_th = 0.1;
@@ -462,6 +513,8 @@ int main(int, char **)
     constexpr float plr_bullet_speed = 4;
     constexpr int bullet_particle_period = 1;
     constexpr float darkness_step = 0.01;
+    constexpr int gem_speed = 4; // Should be a power of two, not greater than tile size.
+    constexpr fvec3 gem_colors[4] {fvec3(1,0.6,0), fvec3(0.9,0,0.4), fvec3(0,0.5,1), fvec3(0,1,0.5)};
 
     Draw::Init();
     Sounds::Init();
@@ -486,7 +539,18 @@ int main(int, char **)
         { // Player
             auto IsSolid = [&](ivec2 offset) -> bool
             {
-                return Hitboxes::player.Hits(w.map, p.pos + offset);
+                bool hits = Hitboxes::player.Hits(w.map, p.pos + offset);
+                if (hits)
+                    return 1;
+                for (const auto &point : Hitboxes::player.Points())
+                {
+                    ivec2 tile_pos = div_ex(point + p.pos + offset, Map::tile_size);
+                    if (w.static_gems.find(tile_pos) != w.static_gems.end())
+                        return 1;
+                    if (w.gem_walls.find(tile_pos) != w.gem_walls.end())
+                        return 1;
+                }
+                return 0;
             };
 
             auto MoveIfPossible = [&](ivec2 offset) -> bool
@@ -564,14 +628,14 @@ int main(int, char **)
             }
 
             { // Controls
-                p.no_movement = p.dead || p.respawning || p.changing_level;
-
                 // Respawn
                 if ((p.dead && p.can_respawn && Keys::any.pressed()) || Keys::escape.pressed())
                 {
                     w = checkpoint_w;
                     Sounds::respawn(p.pos);
                 }
+
+                p.no_movement = p.dead || p.respawning || p.changing_level;
 
                 // Enter a pipe
                 if (!p.no_movement && !p.respawning && Hitboxes::player.Hits(w.map, p.pos.add_x(1), Map::flag_changes_map))
@@ -605,7 +669,7 @@ int main(int, char **)
                     p.aim = 0;
 
                 // Shoot
-                if (p.has_gun)
+                if (p.has_gun && !p.no_movement)
                 {
                     if (p.gun_cooldown > 0)
                         p.gun_cooldown--;
@@ -622,6 +686,58 @@ int main(int, char **)
                     }
                 }
 
+                // Move gems
+                if (w.selected_static_gems.size() > 0 && w.moving_gems.size() == 0)
+                {
+                    p.gem_dir = ivec2(0);
+
+                    if (!p.no_movement)
+                    {
+                        if (Keys::up.down())
+                            p.gem_dir = ivec2(0,-1);
+                        else if (Keys::down.down())
+                            p.gem_dir = ivec2(0,1);
+                        else
+                            p.gem_dir = ivec2(p.left ? -1 : 1, 0);
+                    }
+
+                    if (p.gem_dir != ivec2(0) && Keys::c.down())
+                    {
+                        bool can_move = 0;
+                        ivec2 one_movable_gem;
+                        for (const auto &it : w.selected_static_gems)
+                        {
+                            if (!w.map.TileWithFlagExistsAt(Map::flag_solid, it + p.gem_dir) &&
+                                w.static_gems.find(it + p.gem_dir) == w.static_gems.end())
+                            {
+                                can_move = 1;
+                                one_movable_gem = it;
+                                break;
+                            }
+                        }
+
+                        if (can_move)
+                        {
+                            Sounds::gem_moves(one_movable_gem * Map::tile_size + Map::tile_size/2);
+
+                            for (const auto &it : w.selected_static_gems)
+                            {
+                                auto gem_it = w.static_gems.find(it);
+                                if (gem_it == w.static_gems.end())
+                                    continue;
+                                Gem new_gem;
+                                new_gem.pos = it * Map::tile_size + Map::tile_size/2;
+                                new_gem.dir = p.gem_dir;
+                                new_gem.index = gem_it->second;
+                                w.moving_gems.push_back(new_gem);
+                                w.static_gems.erase(gem_it);
+                            }
+                            w.selected_static_gems.clear();
+                        }
+                    }
+                }
+
+                // Cancel controls if needed
                 if (p.no_movement)
                 {
                     p.hc = 0;
@@ -761,6 +877,30 @@ int main(int, char **)
                     p.dead = 1;
             }
 
+            { // Death by suffocation
+                if (IsSolid(ivec2(0)) && !p.no_movement)
+                    p.dead = 1;
+            }
+
+            { // Death by moving gems
+                if (!p.dead)
+                {
+                    for (const auto &gem : w.moving_gems)
+                    {
+                        for (const auto &offset : Hitboxes::player_small.Points())
+                        {
+                            if ((abs(p.pos + offset - gem.pos) < 8).all())
+                            {
+                                p.dead = 1;
+                                break;
+                            }
+                        }
+                        if (p.dead)
+                            break;
+                    }
+                }
+            }
+
             { // Death particles
                 if (p.dead && !p.prev_dead)
                 {
@@ -832,7 +972,8 @@ int main(int, char **)
             {
                 fvec2 dir = it->vel.norm(), dir2(dir.y, -dir.x);
                 bool remove = 0, tile_destroyed = 0;
-                std::vector<ivec2> tiles;
+                std::vector<ivec2> destroyed_tiles;
+                std::vector<ivec2> hit_gems;
 
                 for (ivec2 offset : hitbox_offsets)
                 {
@@ -853,10 +994,52 @@ int main(int, char **)
                             w.map.Set(tile_pos, Map::layer_list[i], Map::no_tile);
                             remove = 1;
                             tile_destroyed = 1;
-                            tiles.push_back(tile_pos);
+                            destroyed_tiles.push_back(tile_pos);
                         }
                     }
+
+                    if (w.static_gems.find(tile_pos) != w.static_gems.end())
+                    {
+                        remove = 1;
+                        hit_gems.push_back(tile_pos);
+                    }
+                    if (w.gem_walls.find(tile_pos) != w.gem_walls.end())
+                    {
+                        remove = 1;
+                    }
                 }
+
+                if (hit_gems.size())
+                {
+                    w.selected_static_gems.clear();
+
+                    static void (*func)(ivec2, const decltype(w.static_gems) &, decltype(w.selected_static_gems) &)
+                        = [](ivec2 pos, const decltype(w.static_gems) &gems, decltype(w.selected_static_gems) &selected)
+                    {
+                        if (gems.find(pos) == gems.end())
+                            return;
+                        selected.insert(pos);
+
+                        ivec2 next[4]
+                        {
+                            pos + ivec2(1,0),
+                            pos + ivec2(-1,0),
+                            pos + ivec2(0,1),
+                            pos + ivec2(0,-1),
+                        };
+
+                        for (const auto &it : next)
+                        {
+                            if (selected.find(it) != selected.end())
+                                continue;
+                            func(it, gems, selected);
+                        }
+                    };
+
+                    for (const auto &pos : hit_gems)
+                        func(pos, w.static_gems, w.selected_static_gems);
+                }
+
                 if (remove)
                 {
                     if (!tile_destroyed)
@@ -870,7 +1053,7 @@ int main(int, char **)
                     }
                     if (tile_destroyed)
                     {
-                        for (auto tile_pos : tiles)
+                        for (auto tile_pos : destroyed_tiles)
                         {
                             fvec2 base_pos = tile_pos * Map::tile_size + Map::tile_size/2;
                             for (int i = 0; i < 16; i++)
@@ -884,11 +1067,138 @@ int main(int, char **)
                     it = w.bullets.erase(it);
                     continue;
                 }
+
                 it->pos += it->vel;
                 it->age++;
                 if (it->age % bullet_particle_period == 0)
                     w.AddParticle(0, fvec3(0.7,1,0.2), 1, 0.5, it->pos + dir * random_real_range(1) + dir2 * random_real_range(1), fvec2(0), fvec2(0), random_real_range(0.1), 4, random_int(10), 18, 0.3);
                 it++;
+            }
+        }
+
+        { // Moving gems
+            // Make static if needed
+            bool more_iterations = 1;
+            bool any_gem_stopped = 0;
+            ivec2 stopped_pos;
+            while (more_iterations)
+            {
+                more_iterations = 0;
+                auto it = w.moving_gems.begin();
+                while (it != w.moving_gems.end())
+                {
+                    ivec2 test_pos = it->pos + it->dir * 15 - (it->dir < 0);
+                    ivec2 tile_pos = div_ex(test_pos, Map::tile_size);
+                    ivec2 this_tile_pos = div_ex(it->pos, Map::tile_size);
+                    if (w.map.TileWithFlagExistsAt(Map::flag_solid, tile_pos) || w.static_gems.find(tile_pos) != w.static_gems.end() || w.gem_walls.find(tile_pos) != w.gem_walls.end())
+                    {
+                        more_iterations = 1;
+                        any_gem_stopped = 1;
+                        stopped_pos = this_tile_pos;
+                        w.static_gems.insert({this_tile_pos, it->index});
+                        it = w.moving_gems.erase(it);
+                        continue;
+                    }
+                    it++;
+                }
+            }
+            if (any_gem_stopped)
+                Sounds::gem_stops(stopped_pos * Map::tile_size + Map::tile_size/2);
+
+            // Remove groups if needed
+            if (any_gem_stopped && w.moving_gems.size() == 0)
+            {
+                constexpr ivec2 dirs[] {ivec2(1,0), ivec2(1,1), ivec2(0,1), ivec2(-1,1)};
+                std::unordered_set<ivec2> removed_gems;
+                for (const auto &it : w.static_gems)
+                {
+                    ivec2 it_pos = it.first;
+                    int it_index = it.second;
+
+                    for (const auto &d : dirs)
+                    {
+                        std::vector<ivec2> found;
+
+                        for (int s = -1; s <= 1; s += 2)
+                        {
+                            int l = 1;
+                            while (1)
+                            {
+                                if (auto gem_it = w.static_gems.find(it_pos + d * s * l); gem_it != w.static_gems.end() && gem_it->second == it_index)
+                                {
+                                    l++;
+                                    found.push_back(gem_it->first);
+                                }
+                                else
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        if (found.size() >= 2)
+                        {
+                            removed_gems.insert(it_pos);
+                            for (const auto &gem : found)
+                                removed_gems.insert(gem);
+                        }
+                    }
+                }
+
+                if (removed_gems.size() > 0)
+                {
+                    Sounds::gem_breaks(*removed_gems.begin() * Map::tile_size + Map::tile_size/2);
+
+                    for (const auto &removed_gem : removed_gems)
+                    {
+                        auto it = w.static_gems.find(removed_gem);
+                        if (it == w.static_gems.end())
+                            continue;
+                        for (int i = 0; i < 16; i++)
+                        {
+                            fvec2 d(random_real_range(1), random_real_range(1));
+                            float c = std::pow(random_int(3) / 2.f, 1.5);
+                            w.AddParticle(1, gem_colors[it->second] * (1-c) + fvec3(1) * c, 1, random_real_range(0.75,1),
+                                it->first * Map::tile_size + Map::tile_size/2 + d * 4, d * random_real_range(0.2,0.7), fvec2(0,0.025), random_real_range(0.3), 6, random_int(20), 40, 0.25);
+                        }
+                        w.static_gems.erase(it);
+                    }
+
+                    int gem_count[4]{};
+                    for (const auto &gem : w.static_gems)
+                        gem_count[gem.second]++;
+
+                    for (int i = 0; i < 4; i++)
+                    {
+                        if (gem_count[i] > 0)
+                            continue;
+                        auto it = w.gem_walls.begin();
+                        while (it != w.gem_walls.end())
+                        {
+                            if (it->second == i)
+                            {
+                                for (int i = 0; i < 16; i++)
+                                {
+                                    fvec2 d(random_real_range(1), random_real_range(1));
+                                    float c = std::pow(random_int(3) / 2.f, 1.5);
+                                    w.AddParticle(1, gem_colors[it->second] * (1-c) + fvec3(1) * c, 1, random_real_range(0.75,1),
+                                        it->first * Map::tile_size + Map::tile_size/2 + d * 4, d * random_real_range(0.2,0.7), fvec2(0,0.025), random_real_range(0.3), 6, random_int(20), 40, 0.25);
+                                }
+                                it = w.gem_walls.erase(it);
+                                continue;
+                            }
+                            it++;
+                        }
+                    }
+                }
+            }
+
+            // Move
+            for (auto &it : w.moving_gems)
+            {
+                it.pos += it.dir * gem_speed;
+
+                w.AddParticle(0, gem_colors[it.index], random_real_range(0.5,1), random_real(1), it.pos + fvec2(random_real_range(6), random_real_range(6)), fvec2(0), fvec2(0,0.005),
+                              random_real_range(0.15), 7, random_int(20), 40, 0.33);
             }
         }
 
@@ -963,6 +1273,82 @@ int main(int, char **)
             w.map.Render(r, screen_sz, w.cam.pos, Map::mid);
         }
 
+        { // Gem walls
+            // Static gems
+            for (const auto &it : w.gem_walls)
+            {
+                ivec2 pos = it.first;
+                int index = it.second;
+                if ((abs(pos * Map::tile_size + Map::tile_size/2 - w.cam.pos) > screen_sz/2 + Map::tile_size).any())
+                    continue;
+                r.Quad(pos * Map::tile_size - w.cam.pos, ivec2(Map::tile_size)).tex(ivec2(48+16*index,976)).alpha(random_real_range(0.85,1)).beta(random_real_range(0.85,1));
+            }
+        }
+
+        { // Gems
+            // Link to the selection
+            if (w.selected_static_gems.size() > 0)
+            {
+                int index = 0;
+                float squared_dist;
+                for (const auto &tile_pos : w.selected_static_gems)
+                {
+                    fvec2 pos = tile_pos * Map::tile_size + Map::tile_size/2;
+                    float d = (pos - w.p.pos).len_sqr();
+                    if (index == 0 || d < squared_dist)
+                    {
+                        squared_dist = d;
+                        w.p.nearest_selected_gem = pos;
+                    }
+                    index++;
+                }
+
+                float dist = std::sqrt(squared_dist);
+                constexpr float step = 6;
+                float angle = 0;
+                if (w.p.pos != w.p.nearest_selected_gem)
+                    angle = std::atan2(w.p.nearest_selected_gem.y - w.p.pos.y, w.p.nearest_selected_gem.x - w.p.pos.x);
+                fvec2 n(-std::sin(angle), std::cos(angle));
+                for (float i = 0; i <= min(dist, screen_sz.x); i += step)
+                {
+                    float t = (i + step/2) / dist;
+                    r.Quad(w.p.pos * (1 - t) + w.p.nearest_selected_gem * t - w.cam.pos + fvec2(random_real_range(0.5), random_real_range(0.5)) + n * random_real_range(8 * smoothstep(1-abs(t-0.5)*2)), fvec2(step, 0.5))
+                     .rotate(angle).alpha(random_real(0.5)).beta(random_real(1)).center().color(fvec3(1));
+                }
+            }
+
+            // Static gems
+            for (const auto &it : w.static_gems)
+            {
+                ivec2 pos = it.first;
+                int index = it.second;
+                if ((abs(pos * Map::tile_size + Map::tile_size/2 - w.cam.pos) > screen_sz/2 + Map::tile_size).any())
+                    continue;
+                r.Quad(pos * Map::tile_size - w.cam.pos, ivec2(Map::tile_size)).tex(ivec2(48+16*index,992)).alpha(random_real_range(0.9,1)).beta(random_real_range(0,1));
+                r.Quad(pos * Map::tile_size + Map::tile_size/2 - w.cam.pos + iround(fvec2(random_real_range(0.6), random_real_range(0.6))), ivec2(Map::tile_size))
+                 .tex(ivec2(48+16*index,992)).alpha(random_real_range(0.5,1)).beta(random_real_range(0,1)).rotate(random_real_range(0.1)).center();
+            }
+
+            // Moving gems
+            for (const auto &it : w.moving_gems)
+            {
+                if ((abs(it.pos - w.cam.pos) > screen_sz/2 + Map::tile_size).any())
+                    continue;
+                r.Quad(it.pos - w.cam.pos, ivec2(Map::tile_size)).center().tex(ivec2(48+16*it.index,992)).alpha(random_real_range(0.9,1)).beta(random_real_range(0,1));
+                r.Quad(it.pos - w.cam.pos + iround(fvec2(random_real_range(0.6), random_real_range(0.6))), ivec2(Map::tile_size))
+                 .tex(ivec2(48+16*it.index,992)).alpha(random_real_range(0.5,1)).beta(random_real_range(0,1)).rotate(random_real_range(0.1)).center();
+            }
+
+            // Selection
+            for (const auto &pos : w.selected_static_gems)
+            {
+                if ((abs(pos * Map::tile_size + Map::tile_size/2 - w.cam.pos) > screen_sz/2 + Map::tile_size).any())
+                    continue;
+                r.Quad(pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, fvec2(random_real_range(2,4))).rotate(random_real_range(f_pi)).center().color(fvec3(1));
+                r.Quad(pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, fvec2(random_real_range(2,4))).rotate(random_real_range(f_pi)).center().color(fvec3(0));
+            }
+        }
+
         { // Objects
             if (w.obj.gun_exists)
                 r.Quad(w.obj.gun_pos * Map::tile_size - w.cam.pos, ivec2(16)).tex(ivec2(32,0));
@@ -1033,6 +1419,17 @@ int main(int, char **)
                 r.Text(w.obj.help_gun_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Press \1", Keys::x.name(), "\r to shoot\nHold \1", Keys::up.name(), "\r or \1", Keys::down.name(), "\r to aim")).preset(Preset);
             if (w.obj.help_restart_pos != ivec2(-1))
                 r.Text(w.obj.help_restart_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Press \1", Keys::escape.name(), "\r to return\nto the last checkpoint\nif you're stuck")).preset(Preset);
+            if (w.obj.help_gems_pos != ivec2(-1))
+                r.Text(w.obj.help_gems_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Shoot gems to select them\nPress \1", Keys::c.name(), "\r to move selected gems\nHold \1Arrows\r to change direction")).preset(Preset);
+            if (w.obj.help_gems_row_pos != ivec2(-1))
+                r.Text(w.obj.help_gems_row_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Gems explode if placed in a row of three or longer")).preset(Preset);
+        }
+
+        { // Gem movement direction indicator
+            if (w.selected_static_gems.size() > 0 && w.p.gem_dir != ivec2(0))
+            {
+                r.Quad(w.p.nearest_selected_gem - w.cam.pos, ivec2(48-2,16-2)).tex(ivec2(32,16)+1).rotate(std::atan2(w.p.gem_dir.y, w.p.gem_dir.x)).alpha(random_real_range(0.2,0.35)).beta(random_real_range(0,1)).center(ivec2(7));
+            }
         }
 
         { // Messages
