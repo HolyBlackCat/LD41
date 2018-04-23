@@ -7,7 +7,7 @@
 		<Option compiler="gcc" />
 		<Build>
 			<Target title="Debug">
-				<Option output="bin/LD41" prefix_auto="1" extension_auto="1" />
+				<Option output="bin/LD41_g3ms" prefix_auto="1" extension_auto="1" />
 				<Option working_dir="bin/" />
 				<Option object_output="obj/" />
 				<Option type="1" />
@@ -19,7 +19,7 @@
 				</Compiler>
 			</Target>
 			<Target title="Development">
-				<Option output="bin/LD41" prefix_auto="1" extension_auto="1" />
+				<Option output="bin/LD41_g3ms" prefix_auto="1" extension_auto="1" />
 				<Option working_dir="bin/" />
 				<Option object_output="obj/" />
 				<Option type="1" />
@@ -30,7 +30,7 @@
 				</Compiler>
 			</Target>
 			<Target title="Release">
-				<Option output="bin/LD41" prefix_auto="1" extension_auto="1" />
+				<Option output="bin/LD41_g3ms" prefix_auto="1" extension_auto="1" />
 				<Option working_dir="bin/" />
 				<Option object_output="obj/" />
 				<Option type="0" />
@@ -44,7 +44,7 @@
 				</Linker>
 			</Target>
 			<Target title="Debug OpenGL">
-				<Option output="bin/LD41" prefix_auto="1" extension_auto="1" />
+				<Option output="bin/LD41_g3ms" prefix_auto="1" extension_auto="1" />
 				<Option working_dir="bin/" />
 				<Option object_output="obj/" />
 				<Option type="1" />
@@ -56,7 +56,7 @@
 				</Compiler>
 			</Target>
 			<Target title="Release with console">
-				<Option output="bin/LD41" prefix_auto="1" extension_auto="1" />
+				<Option output="bin/LD41_g3ms" prefix_auto="1" extension_auto="1" />
 				<Option working_dir="bin/" />
 				<Option object_output="obj/" />
 				<Option type="1" />
@@ -105,6 +105,9 @@
 			<Add library="ogg" />
 			<Add directory="libs" />
 		</Linker>
+		<Unit filename="icon.rc">
+			<Option compilerVar="WINDRES" />
+		</Unit>
 		<Unit filename="libs/glfl.cpp" />
 		<Unit filename="src/audio.h" />
 		<Unit filename="src/events.cpp" />

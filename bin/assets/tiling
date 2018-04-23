@@ -8,6 +8,17 @@
 	],
 	tiles = [
 		{
+			name = "finale",
+			flags = ["invisible"],
+			layer = la_front,
+			va_default = "main",
+			va_display = "main",
+			variants = [
+				{name = "main" , texture = (2,22), size = (5,5), offset = (-2,-2)},
+			],
+			rules = [],
+		},
+		{
 			name = "barrier",
 			flags = ["invisible","solid"],
 			layer = la_front,
@@ -490,6 +501,17 @@
 			va_display = "main",
 			variants = [
 				{name = "main" , texture = ( 7,26), size = (3,3), offset = (-1,-1)},
+			],
+			rules = [],
+		},
+		{
+			name = "death smoke",
+			flags = ["invisible"],
+			layer = la_mid,
+			va_default = "main",
+			va_display = "main",
+			variants = [
+				{name = "main" , texture = ( 5,28)},
 			],
 			rules = [],
 		},

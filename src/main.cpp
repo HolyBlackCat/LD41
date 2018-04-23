@@ -2,6 +2,7 @@
 #include "map.h"
 
 #include <bitset>
+#include <deque>
 #include <iostream>
 #include <list>
 #include <map>
@@ -13,7 +14,7 @@ constexpr ivec2 screen_sz = ivec2(1920,1080)/4;
 
 Events::AutoErrorHandlers error_handlers;
 
-Window win("LD41", screen_sz * 2, Window::Settings{}.MinSize(screen_sz).Resizable());
+Window win("LD41 - g3ms", screen_sz * 2, Window::Settings{}.MinSize(screen_sz).Resizable());
 Audio::Context audio;
 
 Timing::TickStabilizer tick_stabilizer(60);
@@ -23,9 +24,7 @@ Graphics::Texture texture_main(Graphics::Texture::nearest),
 Graphics::FrameBuffer framebuffer_main = nullptr, framebuffer_scaled = nullptr;
 
 Graphics::Font font_object_main;
-Graphics::Font font_object_tiny;
 Graphics::CharMap font_main;
-Graphics::CharMap font_tiny;
 
 Renderers::Poly2D r;
 
@@ -53,6 +52,7 @@ namespace Sounds
         SOUND( enemy_hurt         , 0.3  ) \
         SOUND( enemy_dies         , 0.3  ) \
         SOUND( cube_hits_wall     , 0.3  ) \
+        SOUND( end                , 0.0  ) \
 
     namespace Buffers
     {
@@ -72,6 +72,10 @@ namespace Sounds
 
     #undef SOUND_LIST
 
+    Audio::Buffer theme_buf;
+    Audio::Source theme;
+    constexpr float theme_vol = 1/9.;
+
     void Init()
     {
         static bool once = 1;
@@ -80,6 +84,12 @@ namespace Sounds
 
         Audio::Source::DefaultRefDistance(200);
         Audio::Source::DefaultRolloffFactor(1);
+        Audio::Volume(3);
+
+        theme_buf.Create();
+        theme_buf.SetData(Audio::Sound::OGG("assets/theme.ogg"));
+        theme.Create(theme_buf);
+        theme.loop(1).volume(theme_vol).play();
     }
 }
 
@@ -226,7 +236,6 @@ namespace Draw
         Graphics::Font::MakeAtlas(textureimage_main, ivec2(0,256), ivec2(256,256),
         {
             {font_object_main, font_main, Graphics::Font::light, Strings::Encodings::cp1251()},
-            {font_object_tiny, font_tiny, Graphics::Font::light, Strings::Encodings::cp1251()},
         });
         /*
         font_main.EnableLineGap(0);
@@ -234,6 +243,7 @@ namespace Draw
         */
 
         texture_main.SetData(textureimage_main);
+        texture_main.Wrap(Graphics::Texture::clamp);
     }
 
     void Init()
@@ -247,7 +257,6 @@ namespace Draw
         Graphics::Blending::FuncNormalPre();
 
         font_object_main.Create("assets/CatIV15.ttf", 15);
-        font_object_tiny.Create("assets/CatTiny11.ttf", 11);
 
         ReloadTextures();
 
@@ -260,6 +269,8 @@ namespace Draw
 
         framebuffer_main  .Attach(texture_fbuf_main);
         framebuffer_scaled.Attach(texture_fbuf_scaled);
+
+        mouse.Show(0);
     }
 
     void FullscreenQuad()
@@ -336,16 +347,22 @@ namespace Maps
 {
     Map array[]
     {
-        Map("1_tutorial.map"),
-        Map("2_gun.map"),
-        Map("3_gems.map"),
-        Map("4_gem_puzzle.map"),
-        Map("5_enemies.map"),
-        Map("6_another_puzzle.map"),
-        Map("7_cubes.map"),
-        Map("8_and_another_puzzle.map"),
-        Map("9_lasers.map"),
-        Map("10_a_puzzle.map"),
+        Map("assets/1_tutorial.map"),
+        Map("assets/2_gun.map"),
+        Map("assets/3_gems.map"),
+        Map("assets/4_gem_puzzle.map"),
+        Map("assets/5_enemies.map"),
+        Map("assets/6_another_puzzle.map"),
+        Map("assets/7_cubes.map"),
+        Map("assets/8_woo.map"),
+        Map("assets/9_and_another_puzzle.map"),
+        Map("assets/10_lasers.map"),
+        Map("assets/11_a_puzzle.map"),
+        Map("assets/12_smoke_intro.map"),
+        Map("assets/13_smoke.map"),
+        Map("assets/14_relax.map"),
+        Map("assets/15_its_something.map"),
+        Map("assets/final.map"),
     };
 
     constexpr int map_count = std::extent_v<decltype(array)>;
@@ -443,6 +460,12 @@ struct EnemyCube
     EnemyCube(ivec2 pos, ivec2 dir) : pos(pos), dir(dir) {}
 };
 
+struct SmokeSource
+{
+    int hp = 3;
+    bool dead = 0;
+};
+
 struct LaserTurret
 {
     float angle = 0;
@@ -486,13 +509,25 @@ struct World
     std::unordered_set<ivec2> selected_static_gems;
     std::vector<Gem> moving_gems;
     std::unordered_set<ivec2> bullet_barriers;
-    std::vector<Particle> particles, particles_front;
+    std::deque<Particle> particles, particles_front;
     std::unordered_map<ivec2, Turret> turrets;
     std::unordered_map<ivec2, LaserTurret> laser_turrets;
     std::vector<EnemyCube> enemy_cubes;
+    std::unordered_map<ivec2, SmokeSource> smoke_sources;
     int gem_count[4]{};
 
-    void AddParticle(bool front, fvec3 color, float alpha, float beta, fvec2 pos, fvec2 vel, fvec2 acc, float av, float size, int cur_frames, int max_frames, float size_power = 1)
+    bool game_start = 0;
+    int game_start_frames = 0;
+    bool game_can_begin = 0;
+
+    bool finale = 0;
+    ivec2 goal_pos = ivec2(0);
+
+    bool ending_scene = 0;
+    int ending_scene_frames = 0;
+    float ending_alpha = 1;
+
+    void AddParticle(bool front, fvec3 color, float alpha, float beta, fvec2 pos, fvec2 vel, fvec2 acc, float av, float size, int cur_frames, int max_frames, float size_power = 1, bool push_front = 0)
     {
         Particle p;
         p.color = color;
@@ -507,7 +542,12 @@ struct World
         p.cur_frames = cur_frames;
         p.max_frames = max_frames;
         p.size_power = size_power;
-        (front ? particles_front : particles).push_back(p);
+
+        auto &container = (front ? particles_front : particles);
+        if (!push_front)
+            container.push_back(p);
+        else
+            container.insert(container.begin(), p);
     }
 
     void AddPlayerBullet(fvec2 pos, fvec2 vel)
@@ -525,12 +565,15 @@ struct World
         enemy_bullets.push_back(b);
     }
 
-    void EnemyShield(fvec2 pos, float rad)
+    void EnemyShield(fvec2 pos, float rad, bool no_particles = 0)
     {
         // Effects
-        for (int i = 0; i < rad * 1.8; i++)
-            AddParticle(0, fvec3(random_real_range(0.6,1)), random_real_range(0.1,0.5), random_real_range(0.25,0.75), pos + fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(rad + random_real_range(1.5), 0),
-                        fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(random_real(0.07),0), fvec2(0), random_real_range(0.3), 3, random_int(3), 5, 0.5);
+        if (!no_particles && (abs(pos - cam.pos) < screen_sz + rad + 16).all())
+        {
+            for (int i = 0; i < rad * 1.8; i++)
+                AddParticle(0, fvec3(random_real_range(0.6,1)), random_real_range(0.1,0.5), random_real_range(0.25,0.75), pos + fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(rad + random_real_range(1.5), 0),
+                            fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(random_real(0.07),0), fvec2(0), random_real_range(0.3), 3, random_int(3), 5, 0.5);
+        }
 
         // Remove bullets
         auto it = bullets.begin();
@@ -612,10 +655,21 @@ struct World
         for (const auto &it : map.FindTiles("enemy laser cw"))
             laser_turrets.insert({it * Map::tile_size + Map::tile_size/2, LaserTurret(1)});
 
+        for (const auto &it : map.FindTiles("death smoke"))
+            smoke_sources.insert({it * Map::tile_size + Map::tile_size/2, {}});
+
 
         // Count gems
         for (const auto &gem : static_gems)
             gem_count[gem.second]++;
+
+
+        if (auto pos = map.FindSingleTileOpt("finale"); pos != ivec2(-1))
+        {
+            finale = 1;
+            goal_pos = pos * Map::tile_size + Map::tile_size/2;
+            p.has_gun = 0;
+        }
     }
 };
 
@@ -633,8 +687,13 @@ void SaveState()
 
 int main(int, char **)
 {
-    constexpr int start_from_level = Maps::map_count-1;
-    //constexpr int start_from_level = 4;
+    #ifdef NDEBUG
+    win.Fullscreen(1);
+    #endif
+
+    constexpr int start_from_level = -1;
+    //constexpr int start_from_level = Maps::map_count-1;
+    //constexpr int start_from_level = -1;
     constexpr bool start_with_gun = start_from_level >= 2;
 
     constexpr int cam_margin = 32;
@@ -649,23 +708,55 @@ int main(int, char **)
     constexpr fvec3 gem_colors[4] {fvec3(1,0.6,0), fvec3(0.9,0,0.4), fvec3(0,0.5,1), fvec3(0,1,0.5)};
     constexpr float tur_angle_step = 0.03, tur_bullet_speed = 5;
     constexpr int tur_start_time = 30, tur_cooldown = 12;
-    constexpr float las_tur_ang_vel = 0.009, las_tur_ray_offset = 29, las_tur_len_cap = 2000, las_tur_ray_width = 8, las_tur_shorten_ray_hitbox = 5;
+    constexpr float las_tur_ang_vel = 0.009, las_tur_ray_offset = 29, las_tur_len_cap = 1000, las_tur_ray_width = 8, las_tur_shorten_ray_hitbox = 5;
+    constexpr float smoke_radius = Map::tile_size * 5;
 
     Draw::Init();
     Sounds::Init();
 
-    map_index = start_from_level;
+    if (start_from_level == -1)
+        Sounds::theme.stop();
 
-    w.SetMap(Maps::array[map_index]);
+    map_index = max(0, start_from_level);
 
     if (start_with_gun)
         w.p.has_gun = 1;
 
+    w.SetMap(Maps::array[map_index]);
+
     SaveState();
+
+    w.game_start = (start_from_level < 0);
 
     auto Tick = [&]
     {
         auto &p = w.p;
+
+        { // Starting scene
+            if (w.game_start)
+            {
+                w.game_start_frames++;
+                if (w.game_start_frames > 120)
+                    w.game_can_begin = 1;
+                if (w.game_can_begin && Keys::any.pressed())
+                {
+                    w.game_start = 0;
+                    Sounds::theme.play();
+                }
+                return;
+            }
+        }
+
+        { // Ending scene
+            if (w.ending_scene)
+            {
+                w.ending_scene_frames++;
+                w.ending_alpha = smoothstep(clamp(1 - (w.ending_scene_frames - 180) / 270.f, 0, 1));
+                if (w.ending_alpha < 0.001 && Keys::any.pressed())
+                    Program::Exit();
+                return;
+            }
+        }
 
         { // Misc
             clamp_assign(w.darkness += darkness_step * (p.changing_level ? 1 : -1), 0, 1);
@@ -1017,7 +1108,7 @@ int main(int, char **)
                     p.dead = 1;
             }
 
-            { // Death by moving gems
+            /*{ // Death by moving gems
                 if (!p.dead)
                 {
                     for (const auto &gem : w.moving_gems)
@@ -1034,7 +1125,7 @@ int main(int, char **)
                             break;
                     }
                 }
-            }
+            }*/
 
             { // Death by turret collision
                 if (!p.dead)
@@ -1102,9 +1193,33 @@ int main(int, char **)
                 }
             }
 
+            { // Death by smoke
+                if (!p.dead)
+                {
+                    for (const auto &pair : w.smoke_sources)
+                    {
+                        const auto &pos = pair.first;
+                        const auto &it = pair.second;
+                        if (it.dead)
+                            continue;
+                        if ((pos - p.pos).len_sqr() < ipow(smoke_radius-16,2))
+                            p.dead = 1;
+                    }
+                }
+            }
+
             { // Revive if player shouldn't be dead
                 if (p.respawning || p.changing_level)
                     p.dead = 0;
+            }
+
+            { // Touching the goal
+                if (w.finale && !w.ending_scene && (p.pos - w.goal_pos).len() < 20)
+                {
+                    w.ending_scene = 1;
+                    Sounds::end(ivec2(0)).relative();
+                    Sounds::theme.stop();
+                }
             }
 
             { // Death particles
@@ -1251,7 +1366,6 @@ int main(int, char **)
                     }
                 }
 
-
                 iter++;
             }
         }
@@ -1372,7 +1486,7 @@ int main(int, char **)
                 auto it = w.enemy_cubes.begin();
                 while (it != w.enemy_cubes.end())
                 {
-                    if (it == this_it)
+                    if (it == this_it || it->dead)
                     {
                         it++;
                         continue;
@@ -1458,6 +1572,65 @@ int main(int, char **)
                             else if (it.hp > 0)
                             {
                                 Sounds::enemy_hurt(it.pos);
+                            }
+                            bullet.remove = 1;
+                        }
+                    }
+                }
+
+                iter++;
+            }
+        }
+
+        { // Smoke sources
+            auto iter = w.smoke_sources.begin();
+            while (iter != w.smoke_sources.end())
+            {
+                auto &pos = iter->first;
+                auto &it = iter->second;
+                if (it.dead)
+                {
+                    iter++;
+                    continue;
+                }
+
+                // Particles
+                for (int i = 0; i < 6; i++)
+                {
+                    float dist = random_real(1);
+                    w.AddParticle(1, gem_colors[3] * random_real_range(0.1,1), random_real_range(0.8,1), random_real_range(0.9,1),
+                                  pos + fmat2::rotate2D(random_real_range(f_pi)) /mul/ fvec2(std::pow(dist,0.5) * (smoke_radius + 16),0),
+                                  fvec2(0), fvec2(0,-0.002), random_real_range(0.1), 30, random_int_range(0 + 13 * dist, 30)*6, 30*6, 0.33, 1);
+                }
+
+                // Health
+                if (w.gem_count[3] > 0)
+                {
+                    w.EnemyShield(pos, smoke_radius);
+                }
+                else
+                {
+                    for (auto &bullet : w.bullets)
+                    {
+                        if ((bullet.pos - pos).len_sqr() < ipow(smoke_radius*0.8,2))
+                        {
+                            it.hp--;
+                            if (it.hp == 0)
+                            {
+                                constexpr int gem_color = 3;
+                                Sounds::enemy_dies(pos);
+                                it.dead = 1;
+                                for (int i = 0; i < 40; i++)
+                                {
+                                    fvec2 d(random_real_range(1), random_real_range(1));
+                                    float c = std::pow(random_int(3) / 2.f, 1.5);
+                                    w.AddParticle(1, gem_colors[gem_color] * (1-c) + fvec3(1) * c, random_real_range(0.5,0.9), random_real_range(0.1,0.4), pos + d * random_real(16), d * random_real_range(0.1,2.8),
+                                                  fvec2(0,0.002), random_real_range(0.3), 12, random_int(15), 30, 0.25);
+                                }
+                            }
+                            else if (it.hp > 0)
+                            {
+                                Sounds::enemy_hurt(pos);
                             }
                             bullet.remove = 1;
                         }
@@ -1588,6 +1761,12 @@ int main(int, char **)
                     continue;
                 }
 
+                if ((it->pos < ivec2(0)).any() || (it->pos > w.map.Size() * Map::tile_size).any())
+                {
+                    it = w.bullets.erase(it);
+                    continue;
+                }
+
                 it->pos += it->vel;
                 it->age++;
                 if (it->age % bullet_particle_period == 0)
@@ -1664,6 +1843,12 @@ int main(int, char **)
                             }
                         }
                     }
+                    it = w.enemy_bullets.erase(it);
+                    continue;
+                }
+
+                if ((it->pos < ivec2(0)).any() || (it->pos > w.map.Size() * Map::tile_size).any())
+                {
                     it = w.enemy_bullets.erase(it);
                     continue;
                 }
@@ -1865,15 +2050,37 @@ int main(int, char **)
     {
         Graphics::Clear(Graphics::color);
 
+        { // Starting scene
+            if (w.game_start)
+            {
+                r.Quad(ivec2(0), screen_sz).tex(ivec2(1568,1620)).center();
+                r.Text(ivec2(0,screen_sz.y/2), "A game by HolyBlackCat (blckcat@inbox.ru) made for LD41, Apr 21-23, 2018").color(fvec3(0.2)).alpha(random_real_range(0.8,1)).align_v(1);
+                if (w.game_can_begin)
+                    r.Text(ivec2(0,64), "Press any key").color(fvec3(1)).alpha(random_real_range(0.8,1));
+                return;
+            }
+        }
+
+        { // Ending scene
+            if (w.ending_scene)
+            {
+                r.Quad(ivec2(0), screen_sz).tex(ivec2(1568,1350)).center();
+                r.Quad(ivec2(0), screen_sz).color(fvec3(1)).alpha(w.ending_alpha).center();
+                return;
+            }
+        }
+
         { // Background
             constexpr float depth[4] {0,3.5,2.5,1.5};
+
 
             for (int z = 0; z < 4; z++)
             for (int x = -1; x < 1; x++)
             {
+                int off = (w.finale && z != 0 ? 128 : 0);
                 float offset = (depth[z] == 0 ? 0 : -w.cam.pos.x / depth[z]);
                 int pos_x = x * screen_sz.x + mod_ex(iround(offset), screen_sz.x);
-                r.Quad(-screen_sz/2 + ivec2(pos_x,0), screen_sz).tex(ivec2(2048 - screen_sz.x, screen_sz.y * z));
+                r.Quad(-screen_sz/2 + ivec2(pos_x,off), screen_sz.sub_y(off)).tex(ivec2(2048 - screen_sz.x, screen_sz.y * z + off));
             }
         }
 
@@ -1914,8 +2121,7 @@ int main(int, char **)
                 if (it.dead)
                     continue;
                 ivec2 pos = pair.first;
-                if ((abs(pos - w.cam.pos) > screen_sz/2 + Map::tile_size*3).any())
-                    continue;
+
                 r.Quad(pos - w.cam.pos, ivec2(80,48)-2).tex(ivec2(0,96)+1).center().rotate(it.angle);
 
                 // Rays
@@ -2030,6 +2236,15 @@ int main(int, char **)
                 r.Quad(w.obj.gun_pos * Map::tile_size - w.cam.pos, ivec2(16)).tex(ivec2(32,0));
         }
 
+        { // Goal
+            if (w.finale)
+            {
+                r.Quad(w.goal_pos - w.cam.pos + iround(fvec2(random_real_range(0.6), random_real_range(0.6))), ivec2(80)-1)
+                 .tex(ivec2(0,832)+1).alpha(random_real_range(0.5,1)).beta(random_real_range(0,1)).rotate(random_real_range(0.1)).center();
+                r.Quad(w.goal_pos - w.cam.pos, ivec2(80)-1).tex(ivec2(0,832)+1).center();
+            }
+        }
+
         { // Player
             float alpha = 1;
             if (w.p.dead)
@@ -2073,16 +2288,16 @@ int main(int, char **)
             }
         }
 
+        { // Map front
+            w.map.Render(r, screen_sz, w.cam.pos, Map::front);
+        }
+
         { // Particles front
             for (const auto &it : w.particles_front)
             {
                 float size = it.size * std::pow(1 - it.cur_frames / float(it.max_frames), it.size_power);
                 r.Quad(it.pos - w.cam.pos, fvec2(size)).color(it.color).alpha(it.alpha).beta(it.beta).rotate(it.angle).center();
             }
-        }
-
-        { // Map front
-            w.map.Render(r, screen_sz, w.cam.pos, Map::front);
         }
 
         { // Signs
@@ -2120,13 +2335,13 @@ int main(int, char **)
 
         { // Messages
             // Interaction text
-            r.Text(ivec2(0,screen_sz.y/2-32), w.message).color(fvec3(0.8,1,0.6)).beta(random_real(1)).preset(Draw::WithBlackOutline);
+            r.Text(ivec2(0,screen_sz.y/2-32), w.message).color(fvec3(1,1,0.8)).beta(random_real(1)).preset(Draw::WithBlackOutline);
 
             // Press any key to respawn
             if (w.p.dead)
             {
                 float alpha = clamp((w.p.death_timer - 60) / 60.f, 0, 1);
-                r.Text(ivec2(0), "Press any key to respawn").color(fvec3(1,0.9,0.8)).beta(random_real(1)).alpha(alpha);
+                r.Text(ivec2(0), "Press any key to respawn").color(fvec3(1,0.9,0.8)).beta(random_real(1)).alpha(alpha).preset(Draw::WithBlackOutline);
             }
         }
 
@@ -2151,6 +2366,8 @@ int main(int, char **)
         while (tick_stabilizer.Tick(frame_delta))
         {
             Events::Process();
+            if (Keys::f11.pressed() || (Keys::l_alt.down() && Keys::enter.pressed()))
+                win.ToggleFullscreen();
             if (win.size_changed)
             {
                 win.size_changed = 0;
