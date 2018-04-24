@@ -75,6 +75,7 @@ namespace Sounds
     Audio::Buffer theme_buf;
     Audio::Source theme;
     constexpr float theme_vol = 1/9.;
+    bool theme_enabled = 1;
 
     void Init()
     {
@@ -731,6 +732,12 @@ int main(int, char **)
     auto Tick = [&]
     {
         auto &p = w.p;
+
+        { // Toggle music
+            if (Keys::m.pressed())
+                Sounds::theme_enabled = !Sounds::theme_enabled;
+            Sounds::theme.volume(Sounds::theme_vol * Sounds::theme_enabled);
+        }
 
         { // Starting scene
             if (w.game_start)
@@ -2317,7 +2324,7 @@ int main(int, char **)
             if (w.obj.help_gun_pos != ivec2(-1))
                 r.Text(w.obj.help_gun_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Press \1", Keys::x.name(), "\r to shoot\nHold \1", Keys::up.name(), "\r or \1", Keys::down.name(), "\r to aim")).preset(Preset);
             if (w.obj.help_restart_pos != ivec2(-1))
-                r.Text(w.obj.help_restart_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Press \1", Keys::escape.name(), "\r to return\nto the last checkpoint\nif you're stuck")).preset(Preset);
+                r.Text(w.obj.help_restart_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("\nPress \1", Keys::escape.name(), "\r to return\nto the last checkpoint\nif you're stuck\nPress \1", Keys::m.name(), "\r to mute music")).preset(Preset);
             if (w.obj.help_gems_pos != ivec2(-1))
                 r.Text(w.obj.help_gems_pos * Map::tile_size + Map::tile_size/2 - w.cam.pos, Str("Shoot gems to select them\nPress \1", Keys::c.name(), "\r to move selected gems\nHold \1Arrows\r to change direction")).preset(Preset);
             if (w.obj.help_gems_row_pos != ivec2(-1))
